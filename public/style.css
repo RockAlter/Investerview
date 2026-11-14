@@ -51,7 +51,7 @@ input:focus, select:focus, button:focus-visible { outline: 1px solid var(--accen
 
 /* chart view */
 main { min-height: 0; }
-#chartView { display: grid; grid-template-columns: 44px 1fr 270px; }
+#chartView { display: grid; grid-template-columns: 44px 1fr 330px; }
 #tools { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
 #tools button { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; background: transparent; border-color: transparent; }
 #tools button:hover { background: var(--panel2); }
@@ -105,7 +105,8 @@ main { min-height: 0; }
 .whead { flex-wrap: wrap; gap: 6px; }
 .whead button { padding: 3px 6px; }
 #watch { min-width: 0; overflow: hidden; }
-#wlist li { grid-template-columns: minmax(0, 1fr) auto auto 18px; }
+#wlist li { grid-template-columns: minmax(0, 1fr) auto auto auto 18px; gap: 6px; }
+#wlist .c { min-width: 48px; }
 #wlist .nm { max-width: 100%; }
 .search { flex: 0 1 230px; min-width: 110px; }
 .search input { width: 100%; }

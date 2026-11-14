@@ -118,7 +118,7 @@ async function metrics(symbol, ext) {
   const hi = Math.max(...b.map((x) => x.high)), lo = Math.min(...b.map((x) => x.low));
   return {
     symbol, name: d.name, type: d.type, currency: d.currency,
-    last, chg: pct(last, c[n - 2]),
+    last, chg: pct(last, c[n - 2]), chgAbs: last - c[n - 2],
     volume: b[n - 1].volume, relVol: avgVol ? b[n - 1].volume / avgVol : null,
     rsi: lastRsi(c), sma50, sma200,
     vs50: pct(last, sma50), vs200: pct(last, sma200),

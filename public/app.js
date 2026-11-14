@@ -121,6 +121,7 @@ function precision() {
 const fmtP = (v, pr = precision()) => v == null ? '–' : v.toLocaleString('en-US', { minimumFractionDigits: pr, maximumFractionDigits: pr });
 const fmtLast = (v) => v == null ? '–' : fmtP(v, v < 1 ? 5 : v < 10 ? 4 : 2);
 const fmtVol = (v) => v == null ? '–' : v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : String(Math.round(v));
+const fmtChg = (v, last) => v == null ? '–' : (v > 0 ? '+' : '') + fmtP(v, last < 1 ? 5 : last < 10 ? 4 : 2); // price change, same decimals as the price
 const fmtPct = (v) => v == null ? '–' : (v > 0 ? '+' : '') + v.toFixed(2) + '%';
 const cls = (v) => v == null || v === 0 ? '' : v > 0 ? 'up' : 'down';
 
@@ -131,7 +132,8 @@ let S = { main: null, inds: [] };
 let timeIdx = new Map();
 
 function lineOpts(color, width = 2) {
-  return { color, lineWidth: width, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  // lastValueVisible puts the indicator's current value on the right-hand price scale, in its own colour
+  return { color, lineWidth: width, priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false };
 }
 
 function makeIndicator(ind, color, nextPane) {
@@ -594,10 +596,12 @@ function renderWatch() {
       li = el('li', { className: s === state.symbol ? 'on' : '' },
         el('span', { className: 's', textContent: s }, el('span', { className: 'nm', textContent: r ? r.name : '' })),
         el('span', { className: 'p', textContent: r ? fmtLast(r.last) : '…' }),
+        el('span', { className: 'c ' + (r ? cls(r.chg) : ''), textContent: r ? fmtChg(r.chgAbs, r.last) : '' }),
         el('span', { className: 'c ' + (r ? cls(r.chg) : ''), textContent: r ? fmtPct(r.chg) : '' }), rm);
       if (state.ext && r && r.extPrice != null) { // second line: latest pre-market / after-hours price, change vs the regular close
         li.children[1].append(el('span', { className: 'x', textContent: t('ext ') + fmtLast(r.extPrice), title: t('Latest extended-hours price') }));
-        li.children[2].append(el('span', { className: 'x ' + cls(r.extChg), textContent: fmtPct(r.extChg), title: t('Change from the regular-session close') }));
+        li.children[2].append(el('span', { className: 'x ' + cls(r.extChg), textContent: fmtChg(r.extPrice - r.last, r.last), title: t('Change from the regular-session close') }));
+        li.children[3].append(el('span', { className: 'x ' + cls(r.extChg), textContent: fmtPct(r.extChg), title: t('Change from the regular-session close') }));
       }
       li.addEventListener('click', () => setSymbol(s));
     }
@@ -709,7 +713,7 @@ const PRESETS = {
   'Top losers (≤ −2%)': { chgMax: -2 },
 };
 const COLS = [
-  ['symbol', 'Symbol', 'l'], ['name', 'Name', 'l'], ['last', 'Last'], ['chg', 'Chg %'], ['volume', 'Volume'], ['relVol', 'Rel vol'],
+  ['symbol', 'Symbol', 'l'], ['name', 'Name', 'l'], ['last', 'Last'], ['chgAbs', 'Chg'], ['chg', 'Chg %'], ['volume', 'Volume'], ['relVol', 'Rel vol'],
   ['rsi', 'RSI 14'], ['vs50', 'vs SMA 50'], ['vs200', 'vs SMA 200'], ['fromHigh', 'From 52w high'], ['w1', '1W'], ['m1', '1M'], ['m3', '3M'], ['spark', '30 days'], ['act', ''],
 ];
 let rows = [], scanErrors = [], sort = { key: 'chg', dir: -1 }, scanSeq = 0;
@@ -772,7 +776,7 @@ function renderGrid() {
     add.addEventListener('click', (e) => { e.stopPropagation(); addWatch(r.symbol); add.textContent = '✓'; });
     const row = el('tr', {},
       el('td', { className: 'l' }, el('b', { textContent: r.symbol })), el('td', { className: 'l nm', textContent: r.name }),
-      el('td', { textContent: fmtLast(r.last) }), pc(r.chg), el('td', { textContent: fmtVol(r.volume) }),
+      el('td', { textContent: fmtLast(r.last) }), el('td', { className: cls(r.chgAbs), textContent: fmtChg(r.chgAbs, r.last) }), pc(r.chg), el('td', { textContent: fmtVol(r.volume) }),
       el('td', { className: r.relVol >= 1.5 ? 'up' : '', textContent: r.relVol == null ? '–' : r.relVol.toFixed(2) + '×' }),
       el('td', { className: r.rsi == null ? '' : r.rsi >= 70 ? 'down' : r.rsi <= 30 ? 'up' : '', textContent: r.rsi == null ? '–' : r.rsi.toFixed(1) }),
       pc(r.vs50), pc(r.vs200), pc(r.fromHigh), pc(r.w1), pc(r.m1), pc(r.m3),
