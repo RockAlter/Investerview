@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChartDesk</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand">Chart<span>Desk</span></div>
+  <div class="search">
+    <input id="sym" placeholder="Search symbol or company…" autocomplete="off" spellcheck="false">
+    <ul id="results" hidden></ul>
+  </div>
+  <nav id="tfs" class="seg"></nav>
+  <select id="type" title="Chart type">
+    <option value="candles">Candles</option>
+    <option value="heikin">Heikin Ashi</option>
+    <option value="bars">Bars</option>
+    <option value="line">Line</option>
+    <option value="area">Area</option>
+  </select>
+  <div class="menu">
+    <button id="indBtn">Indicators ▾</button>
+    <ul id="indMenu" hidden></ul>
+  </div>
+  <label class="chk"><input type="checkbox" id="log"> Log</label>
+  <span class="spacer"></span>
+  <nav id="views" class="seg">
+    <button data-view="chart" class="on">Chart</button>
+    <button data-view="screener">Screener</button>
+  </nav>
+</header>
+
+<main id="chartView">
+  <aside id="tools"></aside>
+  <section id="stage">
+    <div id="chart"></div>
+    <canvas id="draw"></canvas>
+    <div id="legend">
+      <div class="row1"><b id="lgSym"></b><span id="lgName"></span><span id="lgOhlc"></span></div>
+      <div id="chips"></div>
+    </div>
+    <div id="hint" hidden></div>
+    <div id="msg" hidden></div>
+  </section>
+  <aside id="watch">
+    <div class="whead"><span>Watchlist</span><span><button id="impWatch" title="Import a watchlist exported from another charting app">Import</button> <button id="addSec" title="Add a section heading">+ Section</button> <button id="addWatch" title="Add the charted symbol">+ Add</button></span></div>
+    <ul id="wlist"></ul>
+  </aside>
+</main>
+
+<main id="screenView" hidden>
+  <div class="sbar">
+    <label>Universe <select id="uni"></select></label>
+    <input id="uniCustom" placeholder="Symbols, comma separated (e.g. AAPL, SHOP, BTC-USD)" hidden>
+    <label>Preset <select id="preset"></select></label>
+    <button id="scan" class="primary">Scan</button>
+    <span id="scanInfo"></span>
+  </div>
+  <div class="filters" id="filters">
+    <label>Price <input data-f="priceMin" type="number" placeholder="min"><input data-f="priceMax" type="number" placeholder="max"></label>
+    <label>Change % <input data-f="chgMin" type="number" placeholder="min"><input data-f="chgMax" type="number" placeholder="max"></label>
+    <label>RSI <input data-f="rsiMin" type="number" placeholder="min"><input data-f="rsiMax" type="number" placeholder="max"></label>
+    <label>Rel. volume ≥ <input data-f="relVolMin" type="number" step="0.1" placeholder="1.5"></label>
+    <label>Within <input data-f="nearHigh" type="number" placeholder="%"> % of 52w high</label>
+    <label class="chk"><input data-f="above50" type="checkbox"> Above SMA 50</label>
+    <label class="chk"><input data-f="above200" type="checkbox"> Above SMA 200</label>
+    <button id="resetF">Reset filters</button>
+  </div>
+  <div class="tablewrap">
+    <table id="grid"><thead></thead><tbody></tbody></table>
+    <div id="gridEmpty" hidden></div>
+  </div>
+</main>
+
+<dialog id="impDlg">
+  <h3>Import watchlist</h3>
+  <p class="muted">Choose an exported watchlist file (.txt or .csv), or paste symbols below — e.g. <code>NASDAQ:AAPL, NYSE:BRK.B, BINANCE:BTCUSDT</code>.</p>
+  <input id="impFile" type="file" accept=".txt,.csv,text/plain">
+  <textarea id="impText" rows="6" placeholder="Paste symbols here" spellcheck="false"></textarea>
+  <label class="chk"><input id="impReplace" type="checkbox"> Replace my current watchlist instead of adding to it</label>
+  <div id="impInfo" class="muted"></div>
+  <div class="dlgBtns"><button id="impCancel">Cancel</button><button id="impGo" class="primary">Import</button></div>
+</dialog>
+
+<script src="https://unpkg.com/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
