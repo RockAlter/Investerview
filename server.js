@@ -38,23 +38,32 @@ async function yahoo(pathname) {
 }
 
 // ---- candles ------------------------------------------------------------
-function candles(symbol, interval, range) {
+// ext = include pre-market and after-hours bars (intraday only); those bars get x: 1
+function candles(symbol, interval, range, ext = false) {
   const intraday = interval.endsWith('m');
-  return cached(`c|${symbol}|${interval}|${range}`, intraday ? 15000 : 60000, async () => {
-    const j = await yahoo(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`);
+  ext = ext && intraday;
+  return cached(`c|${symbol}|${interval}|${range}|${ext ? 1 : 0}`, intraday ? 15000 : 60000, async () => {
+    const j = await yahoo(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}${ext ? '&includePrePost=true' : ''}`);
     const res = j.chart && j.chart.result && j.chart.result[0];
     if (!res) throw new Error('No data for ' + symbol);
     const m = res.meta || {};
     const ts = res.timestamp || [];
     const q = (res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
     const off = m.gmtoffset || 0; // shift so the chart shows exchange-local time
+    // regular session as seconds-of-day in exchange time, used to flag extended-hours bars
+    const reg = m.currentTradingPeriod && m.currentTradingPeriod.regular;
+    const hasSessions = ext && reg && (m.instrumentType === 'EQUITY' || m.instrumentType === 'ETF');
+    const tod = (s) => (((s + off) % 86400) + 86400) % 86400;
+    const regStart = hasSessions ? tod(reg.start) : 0, regEnd = hasSessions ? tod(reg.end) : 0;
     const byTime = new Map();
     for (let i = 0; i < ts.length; i++) {
       const o = q.open && q.open[i], h = q.high && q.high[i], l = q.low && q.low[i], c = q.close && q.close[i];
       if (o == null || h == null || l == null || c == null) continue;
       let t = ts[i] + off;
       if (!intraday) t = Math.floor(t / 86400) * 86400;
-      byTime.set(t, { time: t, open: o, high: h, low: l, close: c, volume: (q.volume && q.volume[i]) || 0 });
+      const bar = { time: t, open: o, high: h, low: l, close: c, volume: (q.volume && q.volume[i]) || 0 };
+      if (hasSessions) { const s = t % 86400; if (s < regStart || s >= regEnd) bar.x = 1; }
+      byTime.set(t, bar);
     }
     const bars = [...byTime.values()].sort((a, b) => a.time - b.time);
     return {
@@ -86,7 +95,16 @@ function lastRsi(c, p = 14) {
 }
 const pct = (a, b) => (a != null && b ? (a / b - 1) * 100 : null);
 
-async function metrics(symbol) {
+// latest pre-market / after-hours price, if the most recent 5-minute bar is outside the regular session
+async function extQuote(symbol, last) {
+  try {
+    const e = await candles(symbol, '5m', '1d', true);
+    const b = e.bars[e.bars.length - 1];
+    return b && b.x ? { extPrice: b.close, extChg: pct(b.close, last) } : {};
+  } catch { return {}; }
+}
+
+async function metrics(symbol, ext) {
   const d = await candles(symbol, '1d', '1y');
   const b = d.bars;
   if (b.length < 2) throw new Error('Not enough history');
@@ -107,16 +125,17 @@ async function metrics(symbol) {
     fromHigh: pct(last, hi), fromLow: pct(last, lo),
     w1: pct(last, back(5)), m1: pct(last, back(21)), m3: pct(last, back(63)),
     spark: c.slice(-30),
+    ...(ext && (d.type === 'EQUITY' || d.type === 'ETF') ? await extQuote(symbol, last) : {}),
   };
 }
 
-async function screen(symbols) {
+async function screen(symbols, ext) {
   const rows = [], errors = [];
   let next = 0;
   const worker = async () => {
     while (next < symbols.length) {
       const s = symbols[next++];
-      try { rows.push(await metrics(s)); } catch (e) { errors.push({ symbol: s, error: e.message }); }
+      try { rows.push(await metrics(s, ext)); } catch (e) { errors.push({ symbol: s, error: e.message }); }
     }
   };
   await Promise.all(Array.from({ length: 6 }, worker));
@@ -147,12 +166,12 @@ async function handleApi(url, res) {
     const symbol = cleanSymbol(p.get('symbol'));
     const interval = p.get('interval'), range = p.get('range');
     if (!symbol || !INTERVALS.has(interval) || !RANGES.has(range)) return send(res, 400, { error: 'Invalid symbol, interval or range' });
-    return send(res, 200, await candles(symbol, interval, range));
+    return send(res, 200, await candles(symbol, interval, range, p.get('ext') === '1'));
   }
   if (url.pathname === '/api/screen') {
     const symbols = [...new Set((p.get('symbols') || '').split(',').map(cleanSymbol).filter(Boolean))].slice(0, 120);
     if (!symbols.length) return send(res, 200, { rows: [], errors: [] });
-    return send(res, 200, await screen(symbols));
+    return send(res, 200, await screen(symbols, p.get('ext') === '1'));
   }
   if (url.pathname === '/api/search') {
     const q = (p.get('q') || '').trim().slice(0, 40);

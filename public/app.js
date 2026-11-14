@@ -2,6 +2,8 @@
 'use strict';
 
 const LW = window.LightweightCharts;
+const I18N = window.I18N || { t: (s) => s, locale: 'en-US' };
+const t = I18N.t; // translate interface text (see i18n.js)
 const $ = (s, r = document) => r.querySelector(s);
 const el = (tag, props = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -38,6 +40,8 @@ const state = {
   tf: store.get('tf', '1D'),
   type: store.get('type', 'candles'),
   log: store.get('log', false),
+  ext: store.get('ext', false),
+  extRuns: [],
   indicators: store.get('indicators', [{ id: 1, type: 'SMA', period: 50 }, { id: 2, type: 'SMA', period: 200 }, { id: 3, type: 'VOL' }]),
   watch: store.get('watch', DEFAULT_WATCH),
   drawings: store.get('drawings', {}),
@@ -177,6 +181,7 @@ function buildChart(keepRange) {
   const intraday = TF[state.tf][0].endsWith('m');
   chart = LW.createChart(chartEl, {
     autoSize: true,
+    localization: { locale: I18N.locale },
     layout: { background: { color: C.bg }, textColor: C.text, fontFamily: 'system-ui, "Segoe UI", sans-serif', attributionLogo: false, panes: { separatorColor: C.border, separatorHoverColor: 'rgba(76,141,255,.25)', enableResize: true } },
     grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
     crosshair: { mode: 0 },
@@ -223,10 +228,10 @@ function renderChips() {
   const box = $('#chips'); box.textContent = '';
   for (const it of S.inds) {
     const ind = it.ind;
-    const chip = el('span', { className: 'chip' }, el('span', { className: 'dot' }), el('span', { textContent: ind.type === 'VOL' ? 'Vol' : ind.type }));
+    const chip = el('span', { className: 'chip' }, el('span', { className: 'dot' }), el('span', { textContent: ind.type === 'VOL' ? t('Vol') : ind.type }));
     chip.firstChild.style.background = it.isVol ? C.text : it.color;
     if (ind.period != null) {
-      const inp = el('input', { type: 'number', min: 2, max: 500, value: ind.period, title: 'Period' });
+      const inp = el('input', { type: 'number', min: 2, max: 500, value: ind.period, title: t('Period') });
       inp.addEventListener('change', () => {
         const v = Math.round(Number(inp.value));
         if (!(v >= 2 && v <= 500)) { inp.value = ind.period; return; }
@@ -236,7 +241,7 @@ function renderChips() {
       chip.append(inp);
     }
     it.valEl = el('span', { className: 'muted' });
-    const rm = el('button', { textContent: '✕', title: 'Remove' });
+    const rm = el('button', { textContent: '✕', title: t('Remove') });
     rm.addEventListener('click', () => {
       state.indicators = state.indicators.filter((x) => x !== ind);
       store.set('indicators', state.indicators); buildChart(true);
@@ -258,6 +263,7 @@ function updateLegend(i) {
     box.append(el('span', {}, el('i', { textContent: lab }), el('span', { className: k, textContent: fmtP(val) })));
   }
   if (chg != null) box.append(el('span', { className: cls(chg), textContent: fmtPct(chg) }));
+  if (b.x) box.append(el('span', { className: 'tag', textContent: t(b.time % 86400 < 43200 ? 'Pre-market' : 'After-hours') }));
   for (const it of S.inds) {
     if (!it.valEl) continue;
     it.valEl.textContent = it.vals.map((a) => a[i] == null ? '–' : it.isVol ? fmtVol(a[i]) : it.pane ? a[i].toFixed(2) : fmtP(a[i])).join('  ');
@@ -271,12 +277,14 @@ function showMsg(t) { const m = $('#msg'); m.hidden = !t; m.textContent = t || '
 async function load({ refresh = false } = {}) {
   const seq = ++loadSeq;
   const [interval, range] = TF[state.tf];
-  if (!refresh) showMsg('Loading ' + state.symbol + '…');
+  if (!refresh) showMsg(t('Loading {0}…', state.symbol));
   try {
-    const j = await api(`/api/candles?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&range=${range}`);
+    const j = await api(`/api/candles?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&range=${range}${state.ext ? '&ext=1' : ''}`);
     if (seq !== loadSeq) return;
-    if (!j.bars.length) throw new Error('No data for ' + state.symbol + ' on this timeframe');
+    if (!j.bars.length) throw new Error(t('No data for {0} on this timeframe', state.symbol));
     state.data = j.bars; state.meta = j;
+    state.extRuns = []; // [firstIndex, lastIndex] of each stretch of pre-market / after-hours bars
+    j.bars.forEach((b, i) => { if (b.x) { const r = state.extRuns[state.extRuns.length - 1]; if (r && r[1] === i - 1) r[1] = i; else state.extRuns.push([i, i]); } });
     timeIdx = new Map(j.bars.map((b, i) => [b.time, i]));
     const diffs = []; for (let i = Math.max(1, j.bars.length - 60); i < j.bars.length; i++) diffs.push(j.bars[i].time - j.bars[i - 1].time);
     diffs.sort((a, b) => a - b); state.step = diffs[diffs.length >> 1] || 86400;
@@ -285,7 +293,7 @@ async function load({ refresh = false } = {}) {
     document.title = `${state.symbol} ${fmtP(j.price)} · ChartDesk`;
   } catch (e) {
     if (seq !== loadSeq) return;
-    if (!refresh) showMsg(e.message + ' — try another symbol or timeframe.');
+    if (!refresh) showMsg(e.message + t(' — try another symbol or timeframe.'));
   }
 }
 
@@ -310,11 +318,13 @@ for (const k of Object.keys(TF)) {
 $('#type').value = state.type;
 $('#type').addEventListener('change', (e) => { state.type = e.target.value; store.set('type', state.type); if (state.data.length) buildChart(true); });
 $('#log').checked = state.log;
+$('#ext').checked = state.ext;
+$('#ext').addEventListener('change', (e) => { state.ext = e.target.checked; store.set('ext', state.ext); load(); refreshWatch(); });
 $('#log').addEventListener('change', (e) => { state.log = e.target.checked; store.set('log', state.log); if (chart) chart.priceScale('right').applyOptions({ mode: state.log ? 1 : 0 }); });
 
 const indMenu = $('#indMenu');
 for (const [type, def] of Object.entries(IND)) {
-  const li = el('li', { textContent: def.name });
+  const li = el('li', { textContent: t(def.name) });
   li.addEventListener('click', () => {
     indMenu.hidden = true;
     if (def.period == null && state.indicators.some((x) => x.type === type)) return; // one is enough
@@ -380,12 +390,12 @@ let draft = null, selected = null, downAt = null;
 const toolsEl = $('#tools');
 const svg = (inner) => `<svg viewBox="0 0 20 20">${inner}</svg>`;
 for (const [id, title, icon] of TOOLS) {
-  const b = el('button', { title, innerHTML: svg(icon) }); b.dataset.tool = id;
+  const b = el('button', { title: t(title), innerHTML: svg(icon) }); b.dataset.tool = id;
   b.addEventListener('click', () => setTool(id));
   toolsEl.append(b);
 }
 toolsEl.append(el('hr'));
-const delBtn = el('button', { title: 'Delete selected drawing, or all drawings on this symbol if none is selected (Del)', innerHTML: svg('<path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/>') });
+const delBtn = el('button', { title: t('Delete selected drawing, or all drawings on this symbol if none is selected (Del)'), innerHTML: svg('<path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/>') });
 delBtn.addEventListener('click', () => removeDrawings());
 toolsEl.append(delBtn);
 
@@ -393,13 +403,13 @@ function setTool(id) {
   state.tool = id; draft = null;
   for (const b of toolsEl.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === id);
   cv.classList.toggle('active', id !== 'cursor');
-  const h = $('#hint'); h.hidden = id === 'cursor'; h.textContent = HINTS[id] || '';
+  const h = $('#hint'); h.hidden = id === 'cursor'; h.textContent = HINTS[id] ? t(HINTS[id]) : '';
 }
 const list = () => (state.drawings[state.symbol] ||= []);
 const saveDrawings = () => store.set('drawings', state.drawings);
 function removeDrawings() {
   if (selected) { state.drawings[state.symbol] = list().filter((d) => d !== selected); selected = null; }
-  else if (list().length && confirm(`Remove all ${list().length} drawings on ${state.symbol}?`)) state.drawings[state.symbol] = [];
+  else if (list().length && confirm(t('Remove all {0} drawings on {1}?', list().length, state.symbol))) state.drawings[state.symbol] = [];
   saveDrawings();
 }
 
@@ -514,7 +524,7 @@ function drawOne(d, g, isDraft) {
     ctx.fillStyle = up ? 'rgba(47,191,113,.13)' : 'rgba(240,82,79,.13)'; ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
     ctx.strokeStyle = c; ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
     const dp = d.b.price - d.a.price, bars = Math.round(timeToLogical(d.b.time) - timeToLogical(d.a.time));
-    label(`${dp >= 0 ? '+' : ''}${fmtP(dp)}  (${fmtPct(dp / d.a.price * 100)})  ·  ${bars} bars`, (a.x + b.x) / 2, Math.min(a.y, b.y) - 12, c, 'center');
+    label(`${dp >= 0 ? '+' : ''}${fmtP(dp)}  (${fmtPct(dp / d.a.price * 100)})  ·  ${bars} ${t('bars')}`, (a.x + b.x) / 2, Math.min(a.y, b.y) - 12, c, 'center');
   }
   if (sel) { ctx.fillStyle = '#fff'; for (const h of handles) { ctx.beginPath(); ctx.arc(h.x, h.y, 3.5, 0, 7); ctx.fill(); } }
 }
@@ -526,8 +536,12 @@ function frame() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h);
   const g = geom(); if (!g) return;
   const items = list();
-  if (!items.length && !draft) return;
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, g.w, g.h); ctx.clip();
+  ctx.fillStyle = 'rgba(120,150,255,.09)'; // shade pre-market / after-hours stretches
+  for (const [a, b] of state.extRuns) {
+    const x1 = g.x0 + (a - 0.5) * g.sp, x2 = g.x0 + (b + 0.5) * g.sp;
+    if (x2 > 0 && x1 < g.w) ctx.fillRect(x1, 0, x2 - x1, g.h);
+  }
   for (const d of items) drawOne(d, g, false);
   if (draft) drawOne(draft, g, true);
   ctx.restore();
@@ -552,7 +566,7 @@ function renderWatch() {
   let hide = false;
   state.watch.forEach((s, i) => {
     let li;
-    const rm = el('button', { className: 'rm', textContent: '✕', title: isSec(s) ? 'Remove this heading (its symbols stay)' : 'Remove' });
+    const rm = el('button', { className: 'rm', textContent: '✕', title: t(isSec(s) ? 'Remove this heading (its symbols stay)' : 'Remove') });
     rm.addEventListener('click', (e) => { e.stopPropagation(); state.watch.splice(i, 1); saveWatch(); renderWatch(); });
     if (isSec(s)) {
       const name = s.slice(1); hide = collapsed.has(name);
@@ -569,9 +583,9 @@ function renderWatch() {
         li = el('li', { className: 'sec' }, inp);
         setTimeout(() => { inp.focus(); inp.select(); });
       } else {
-        const ed = el('button', { className: 'rm', textContent: '✎', title: 'Rename' });
+        const ed = el('button', { className: 'rm', textContent: '✎', title: t('Rename') });
         ed.addEventListener('click', (e) => { e.stopPropagation(); renameI = i; renderWatch(); });
-        li = el('li', { className: 'sec', title: 'Click to collapse or expand · drag to move' }, el('span', { className: 'sn', textContent: (hide ? '▸ ' : '▾ ') + name }), ed, rm);
+        li = el('li', { className: 'sec', title: t('Click to collapse or expand · drag to move') }, el('span', { className: 'sn', textContent: (hide ? '▸ ' : '▾ ') + name }), ed, rm);
         li.addEventListener('click', () => { if (collapsed.has(name)) collapsed.delete(name); else collapsed.add(name); store.set('collapsed', [...collapsed]); renderWatch(); });
       }
     } else {
@@ -579,8 +593,12 @@ function renderWatch() {
       const r = watchData.get(s);
       li = el('li', { className: s === state.symbol ? 'on' : '' },
         el('span', { className: 's', textContent: s }, el('span', { className: 'nm', textContent: r ? r.name : '' })),
-        el('span', { textContent: r ? fmtLast(r.last) : '…' }),
+        el('span', { className: 'p', textContent: r ? fmtLast(r.last) : '…' }),
         el('span', { className: 'c ' + (r ? cls(r.chg) : ''), textContent: r ? fmtPct(r.chg) : '' }), rm);
+      if (state.ext && r && r.extPrice != null) { // second line: latest pre-market / after-hours price, change vs the regular close
+        li.children[1].append(el('span', { className: 'x', textContent: t('ext ') + fmtLast(r.extPrice), title: t('Latest extended-hours price') }));
+        li.children[2].append(el('span', { className: 'x ' + cls(r.extChg), textContent: fmtPct(r.extChg), title: t('Change from the regular-session close') }));
+      }
       li.addEventListener('click', () => setSymbol(s));
     }
     // drag to reorder, or to move a symbol under another heading
@@ -606,7 +624,7 @@ function renderWatch() {
 async function refreshWatch() {
   const syms = watchSymbols();
   if (syms.length) {
-    try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',')); for (const r of j.rows) watchData.set(r.symbol, r); } catch { /* keep stale values */ }
+    try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',') + (state.ext ? '&ext=1' : '')); if (!state.ext) watchData.clear(); for (const r of j.rows) watchData.set(r.symbol, r); } catch { /* keep stale values */ }
   }
   renderWatch();
 }
@@ -615,7 +633,7 @@ function addWatch(sym) {
   state.watch.push(sym); saveWatch(); refreshWatch();
 }
 $('#addWatch').addEventListener('click', () => addWatch(state.symbol));
-$('#addSec').addEventListener('click', () => { state.watch.push('#New section'); renameI = state.watch.length - 1; saveWatch(); renderWatch(); $('#wlist').scrollTop = 1e6; });
+$('#addSec').addEventListener('click', () => { state.watch.push('#' + t('New section')); renameI = state.watch.length - 1; saveWatch(); renderWatch(); $('#wlist').scrollTop = 1e6; });
 
 // ---- import a watchlist exported as EXCHANGE:SYMBOL text and map it to this app's symbols
 const EX_SUFFIX = { TSX: '.TO', TSXV: '.V', NEO: '.NE', LSE: '.L', HKEX: '.HK', TSE: '.T', SSE: '.SS', SZSE: '.SZ', XETR: '.DE', FWB: '.F', ASX: '.AX', NSE: '.NS', BSE: '.BO', TWSE: '.TW', KRX: '.KS', SGX: '.SI', SIX: '.SW', MIL: '.MI', BME: '.MC', OMXSTO: '.ST', BMFBOVESPA: '.SA' };
@@ -664,7 +682,7 @@ $('#impGo').addEventListener('click', () => {
     }
     for (const sym of p.split(/\s+/).map(mapSymbol)) if (sym && !seen.has(sym)) { out.push(sym); seen.add(sym); added++; }
   }
-  if (!added) { impInfo.textContent = 'No new symbols found — choose a file or paste a list first.'; return; }
+  if (!added) { impInfo.textContent = t('No new symbols found — choose a file or paste a list first.'); return; }
   state.watch = out.slice(0, 150);
   saveWatch();
   impDlg.close(); refreshWatch();
@@ -696,8 +714,8 @@ const COLS = [
 ];
 let rows = [], scanErrors = [], sort = { key: 'chg', dir: -1 }, scanSeq = 0;
 const uniSel = $('#uni'), presetSel = $('#preset'), customInp = $('#uniCustom');
-for (const k of Object.keys(UNIVERSES)) uniSel.append(el('option', { textContent: k }));
-for (const k of Object.keys(PRESETS)) presetSel.append(el('option', { textContent: k }));
+for (const k of Object.keys(UNIVERSES)) uniSel.append(el('option', { textContent: t(k), value: k }));
+for (const k of Object.keys(PRESETS)) presetSel.append(el('option', { textContent: t(k), value: k }));
 uniSel.value = store.get('universe', 'US large caps'); if (!uniSel.value) uniSel.selectedIndex = 0;
 customInp.value = store.get('custom', '');
 const fInputs = [...document.querySelectorAll('#filters [data-f]')];
@@ -737,7 +755,7 @@ function renderGrid() {
   const tr = el('tr');
   for (const [key, title, c] of COLS) {
     const sortable = key !== 'spark' && key !== 'act';
-    const th = el('th', { className: c || '', textContent: title + (sort.key === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '') });
+    const th = el('th', { className: c || '', textContent: t(title) + (sort.key === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '') });
     if (sortable) th.addEventListener('click', () => { sort = { key, dir: sort.key === key ? -sort.dir : (c === 'l' ? 1 : -1) }; renderGrid(); });
     tr.append(th);
   }
@@ -750,7 +768,7 @@ function renderGrid() {
   });
   for (const r of shown) {
     const pc = (v) => el('td', { className: cls(v), textContent: fmtPct(v) });
-    const add = el('button', { textContent: state.watch.includes(r.symbol) ? '✓' : '+ Watch', title: 'Add to watchlist' });
+    const add = el('button', { textContent: state.watch.includes(r.symbol) ? '✓' : t('+ Watch'), title: t('Add to watchlist') });
     add.addEventListener('click', (e) => { e.stopPropagation(); addWatch(r.symbol); add.textContent = '✓'; });
     const row = el('tr', {},
       el('td', { className: 'l' }, el('b', { textContent: r.symbol })), el('td', { className: 'l nm', textContent: r.name }),
@@ -764,18 +782,18 @@ function renderGrid() {
   }
   const empty = $('#gridEmpty');
   empty.hidden = shown.length > 0;
-  empty.textContent = rows.length ? 'No symbols match these filters.' : 'Press Scan to load this universe.';
-  if (rows.length) $('#scanInfo').textContent = `${shown.length} of ${rows.length} match · click a row to chart it` + (scanErrors.length ? ` · no data for ${scanErrors.join(', ')}` : '');
+  empty.textContent = t(rows.length ? 'No symbols match these filters.' : 'Press Scan to load this universe.');
+  if (rows.length) $('#scanInfo').textContent = t('{0} of {1} match · click a row to chart it', shown.length, rows.length) + (scanErrors.length ? t(' · no data for {0}', scanErrors.join(', ')) : '');
 }
 async function scan() {
   const symbols = universeSymbols(), seq = ++scanSeq;
-  if (!symbols.length) { rows = []; $('#scanInfo').textContent = 'This list is empty.'; return renderGrid(); }
-  $('#scanInfo').textContent = `Scanning ${symbols.length} symbols…`;
+  if (!symbols.length) { rows = []; $('#scanInfo').textContent = t('This list is empty.'); return renderGrid(); }
+  $('#scanInfo').textContent = t('Scanning {0} symbols…', symbols.length);
   try {
     const j = await api('/api/screen?symbols=' + symbols.map(encodeURIComponent).join(','));
     if (seq !== scanSeq) return;
     rows = j.rows; scanErrors = j.errors.map((e) => e.symbol); renderGrid();
-  } catch (e) { if (seq === scanSeq) $('#scanInfo').textContent = 'Scan failed: ' + e.message; }
+  } catch (e) { if (seq === scanSeq) $('#scanInfo').textContent = t('Scan failed: ') + e.message; }
 }
 $('#scan').addEventListener('click', scan);
 uniSel.addEventListener('change', () => { store.set('universe', uniSel.value); customInp.hidden = uniSel.value !== 'Custom list…'; scan(); });
@@ -799,7 +817,7 @@ function setView(v) {
 }
 for (const b of $('#views').children) b.addEventListener('click', () => setView(b.dataset.view));
 
-if (!LW) showMsg('Could not load the charting library (needs an internet connection). Reload to retry.');
+if (!LW) showMsg(t('Could not load the charting library (needs an internet connection). Reload to retry.'));
 else {
   setTool('cursor'); renderWatch(); renderGrid();
   load(); refreshWatch(); requestAnimationFrame(frame);

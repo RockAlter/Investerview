@@ -5,6 +5,8 @@ A trading screening app: local charting and stock screening in the browser (the 
 ## Features
 
 - **Charts** — candles, Heikin Ashi, bars, line or area; timeframes from 1 minute to 1 month; log scale.
+- **Extended hours** — optional pre-market and after-hours bars (4:00 am–8:00 pm ET) for stocks and ETFs on the 1m–1h charts, shaded, plus the latest extended-hours price in the watchlist. The overnight session is not available from this data source.
+- **Languages** — English, 简体中文, 繁體中文 and 日本語. The interface follows the browser/OS language automatically, with a selector in the top bar to override it. Translations live in `public/i18n.js`.
 - **Indicators** — SMA, EMA, Bollinger Bands, volume, RSI, MACD, with editable periods.
 - **Drawing tools** — trend line, horizontal/vertical line, rectangle, Fibonacci retracement, measure. Drawings are saved per symbol and survive timeframe changes.
 - **Watchlist** — sections, drag-to-reorder, live last price and daily change.
