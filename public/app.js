@@ -13,8 +13,32 @@ const el = (tag, props = {}, ...kids) => {
 };
 const store = {
   get(k, d) { try { const v = localStorage.getItem('cd.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('cd.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+  set(k, v) { try { localStorage.setItem('cd.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } if (SYNCED.has(k)) pushState(); },
 };
+// The watchlist, drawings and indicators are also mirrored to a file on disk through the local
+// server, so they survive a cleared browser and the MCP server can read them. The file wins on start-up.
+const SYNCED = new Set(['watch', 'drawings', 'collapsed', 'indicators']);
+let syncReady = false, pushTimer = 0;
+function pushState() {
+  if (!syncReady) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ watch: state.watch, drawings: state.drawings, collapsed: [...collapsed], indicators: state.indicators }) }).catch(() => {});
+  }, 400);
+}
+async function pullState() {
+  try {
+    const s = await api('/api/state');
+    if (s && Array.isArray(s.watch)) {
+      state.watch = s.watch; state.drawings = s.drawings || {};
+      if (Array.isArray(s.indicators)) state.indicators = s.indicators;
+      collapsed.clear(); for (const c of s.collapsed || []) collapsed.add(c);
+      store.set('watch', state.watch); store.set('drawings', state.drawings); store.set('indicators', state.indicators); store.set('collapsed', [...collapsed]);
+      syncReady = true;
+    } else { syncReady = true; pushState(); } // no file yet: create it from this browser's data
+  } catch { syncReady = true; }
+}
 async function api(path) {
   const r = await fetch(path);
   const j = await r.json().catch(() => ({}));
@@ -822,10 +846,10 @@ function setView(v) {
 for (const b of $('#views').children) b.addEventListener('click', () => setView(b.dataset.view));
 
 if (!LW) showMsg(t('Could not load the charting library (needs an internet connection). Reload to retry.'));
-else {
+else pullState().then(() => {
   setTool('cursor'); renderWatch(); renderGrid();
   load(); refreshWatch(); requestAnimationFrame(frame);
   setInterval(() => { if (!document.hidden && state.view === 'chart') load({ refresh: true }); }, 30000);
   setInterval(() => { if (!document.hidden) refreshWatch(); }, 60000);
-}
+});
 })();
