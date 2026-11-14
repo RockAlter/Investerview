@@ -21,6 +21,18 @@ node server.js
 
 Then open <http://localhost:5178>. On Windows you can double-click `start.bat` instead. Set the `PORT` environment variable to use a different port.
 
+## Build a standalone .exe
+
+To give the app to someone who doesn't have Node.js, build a single-file executable:
+
+```bash
+npm run build
+```
+
+This writes `dist/Investerview.exe` (about 80 MB — it contains the Node runtime). The build downloads one helper tool, [postject](https://github.com/nodejs/postject), through `npx`. Double-clicking the exe starts the app and opens it in the default browser; closing its console window stops it.
+
+The exe is not code-signed, so Windows SmartScreen will warn the first time it runs ("More info" → "Run anyway").
+
 ## Symbols
 
 | Market | Example |

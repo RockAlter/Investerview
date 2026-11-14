@@ -161,18 +161,44 @@ async function handleApi(url, res) {
   send(res, 404, { error: 'Not found' });
 }
 
-http.createServer(async (req, res) => {
+let sea = null; // set when running as a packaged single-file executable
+try { const s = require('node:sea'); if (s.isSea()) sea = s; } catch { /* plain node */ }
+
+const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname.startsWith('/api/')) return await handleApi(url, res);
     const rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname).replace(/^\/+/, '');
     const file = path.resolve(PUB, rel);
     if (file !== PUB && !file.startsWith(PUB + path.sep)) return send(res, 403, 'Forbidden', 'text/plain');
-    fs.readFile(file, (err, buf) => {
+    const done = (err, buf) => {
       if (err) return send(res, 404, 'Not found', 'text/plain');
       send(res, 200, buf, MIME[path.extname(file)] || 'application/octet-stream');
-    });
+    };
+    if (!sea) return fs.readFile(file, done);
+    // packaged exe: the page files are embedded in the executable
+    try { done(null, Buffer.from(sea.getAsset('public/' + path.relative(PUB, file).split(path.sep).join('/')))); } catch (e) { done(e); }
   } catch (e) {
     send(res, 502, { error: e.message || 'Server error' });
   }
-}).listen(PORT, '127.0.0.1', () => console.log(`ChartDesk running at http://localhost:${PORT}`));
+});
+
+const URL_LOCAL = `http://localhost:${PORT}`;
+function openBrowser() {
+  if (!sea || process.env.NO_OPEN) return; // only the packaged exe opens a browser by itself
+  const cmd = process.platform === 'win32' ? `start "" ${URL_LOCAL}` : process.platform === 'darwin' ? `open ${URL_LOCAL}` : `xdg-open ${URL_LOCAL}`;
+  require('child_process').exec(cmd, () => {});
+}
+server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.log(`Port ${PORT} is already in use - ChartDesk is probably already running. Opening ${URL_LOCAL}`);
+    openBrowser();
+    return setTimeout(() => process.exit(0), 1500);
+  }
+  console.error(e.message); process.exit(1);
+});
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`ChartDesk running at ${URL_LOCAL}`);
+  if (sea) console.log('Keep this window open while you use the app. Close it to stop.');
+  openBrowser();
+});
