@@ -5,7 +5,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = Number(process.env.PORT) || 5178;
+// command-line options: --port=5178  --ibkr=https://localhost:5000  --mcp
+const argVal = (name) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : null; };
+const PORT = Number(argVal('port') || process.env.PORT) || 5178;
 const PUB = path.join(__dirname, 'public');
 const YH = 'https://query1.finance.yahoo.com';
 const HEADERS = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
@@ -176,6 +178,10 @@ async function handleApi(url, req, res) {
     return send(res, 200, { ok: true });
   }
   if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+  if (url.pathname === '/api/ibkr') {
+    const want = p.get('account') || '';
+    return send(res, 200, await ibkrSnapshot(/^[A-Za-z0-9]{1,20}$/.test(want) ? want : ''));
+  }
   if (url.pathname === '/api/candles') {
     const symbol = cleanSymbol(p.get('symbol'));
     const interval = p.get('interval'), range = p.get('range');
@@ -231,10 +237,116 @@ function readBody(req, max) {
   });
 }
 
+// ---- Interactive Brokers (read-only) ----------------------------------------
+// Reads positions, balances and open orders from IBKR's Client Portal Gateway, which the
+// user runs and logs into on this computer. Nothing here can place, change or cancel an
+// order: ib() refuses every request that is not on the read-only list below.
+let IB_URL = null;
+try { IB_URL = new URL(argVal('ibkr') || process.env.IBKR_GATEWAY || 'https://localhost:5000'); } catch { /* invalid URL: stay off */ }
+// The gateway uses a self-signed certificate, so it is only trusted on the loopback address.
+const IB_LOCAL = !!IB_URL && /^(localhost|127\.0\.0\.1)$/.test(IB_URL.hostname);
+const IB_READONLY = [
+  ['POST', /^\/tickle$/],                                   // keep-alive ping, also reports session status
+  ['GET', /^\/portfolio\/accounts$/],
+  ['GET', /^\/portfolio\/[A-Za-z0-9]+\/positions\/\d+$/],
+  ['GET', /^\/portfolio\/[A-Za-z0-9]+\/summary$/],
+  ['GET', /^\/iserver\/account\/orders$/],
+  ['GET', /^\/iserver\/account\/pnl\/partitioned$/],
+];
+function ib(method, p) {
+  if (!IB_LOCAL) return Promise.reject(new Error('IBKR gateway must run on this computer'));
+  if (!IB_READONLY.some(([m, re]) => m === method && re.test(p))) return Promise.reject(new Error('Blocked: not a read-only IBKR request'));
+  return new Promise((resolve, reject) => {
+    const secure = IB_URL.protocol === 'https:';
+    const req = (secure ? require('https') : http).request({
+      hostname: IB_URL.hostname, port: IB_URL.port || (secure ? 443 : 80), path: '/v1/api' + p, method, rejectUnauthorized: false, timeout: 8000,
+      headers: { 'User-Agent': 'Investerview', Accept: 'application/json', ...(method === 'POST' ? { 'Content-Length': 0 } : {}) },
+    }, (res) => {
+      let body = ''; res.setEncoding('utf8');
+      res.on('data', (c) => { if (body.length < 5e6) body += c; });
+      res.on('end', () => { let json = null; try { json = JSON.parse(body); } catch { /* login page or empty */ } resolve({ status: res.statusCode, json }); });
+    });
+    req.on('timeout', () => req.destroy(new Error('IBKR gateway timed out')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+// IBKR listing exchange -> Yahoo suffix, so a position can be opened on the chart
+const IB_EXCH = { SEHK: '.HK', TSEJ: '.T', LSE: '.L', LSEETF: '.L', IBIS: '.DE', IBIS2: '.DE', FWB: '.F', TSE: '.TO', VENTURE: '.V', ASX: '.AX', SGX: '.SI', SBF: '.PA', AEB: '.AS', BVME: '.MI', BM: '.MC', EBS: '.SW', SFB: '.ST', KSE: '.KS', NSE: '.NS', TWSE: '.TW', SEHKNTL: '.SS', SEHKSZSE: '.SZ' };
+function ibChartSymbol(assetClass, ticker, exchange) {
+  let s = String(ticker || '').trim().toUpperCase();
+  if (!s) return null;
+  if (assetClass === 'CRYPTO') return cleanSymbol(s.split(/[.\s]/)[0] + '-USD');
+  if (assetClass === 'CASH') return cleanSymbol(s.replace(/[.\s/]/g, '') + '=X');
+  if (assetClass !== 'STK') return null; // options, futures, bonds: no chart mapping
+  const ex = String(exchange || '').split('.')[0].toUpperCase();
+  s = s.replace(/\.$/, '').replace(/[.\s]/g, '-');
+  if (IB_EXCH[ex]) { if (ex === 'SEHK' && /^\d+$/.test(s)) s = s.padStart(4, '0'); return cleanSymbol(s + IB_EXCH[ex]); }
+  return cleanSymbol(s);
+}
+const amount = (summary, key) => { const v = summary && summary[key]; return v && isNum(v.amount) ? v.amount : null; };
+const WORKING = /^(submitted|presubmitted|pendingsubmit|pendingcancel)$/i;
+function ibkrSnapshot(wantAccount) {
+  return cached('ibkr|' + wantAccount, 5000, async () => {
+    if (!IB_LOCAL) return { state: 'off' };
+    let accts;
+    try { accts = await ib('GET', '/portfolio/accounts'); } catch { return { state: 'unreachable' }; }
+    const list = Array.isArray(accts.json) ? accts.json.filter((a) => a && (a.accountId || a.id)) : [];
+    if (!list.length) return { state: 'login' };
+    const acct = list.find((a) => (a.accountId || a.id) === wantAccount) || list[0];
+    const id = String(acct.accountId || acct.id);
+    if (!/^[A-Za-z0-9]{1,20}$/.test(id)) return { state: 'login' };
+    const out = {
+      state: 'ok', brokerage: false, accounts: list.map((a) => String(a.accountId || a.id)),
+      account: { id, alias: acct.accountAlias || null, currency: acct.currency || '', paper: acct.type === 'DEMO' || /^D/i.test(id) },
+      summary: {}, positions: [], orders: [],
+    };
+    try { const tk = await ib('POST', '/tickle'); out.brokerage = !!(tk.json && tk.json.iserver && tk.json.iserver.authStatus && tk.json.iserver.authStatus.authenticated); } catch { /* keep false */ }
+    for (let page = 0; page < 5; page++) { // 100 positions per page
+      const r = await ib('GET', `/portfolio/${id}/positions/${page}`);
+      const rows = Array.isArray(r.json) ? r.json : [];
+      for (const p of rows) {
+        if (!p || !isNum(p.position) || p.position === 0) continue;
+        const ticker = p.ticker || String(p.contractDesc || '').split(' ')[0];
+        out.positions.push({
+          conid: p.conid, symbol: ticker, desc: p.contractDesc || ticker, name: p.name || '', assetClass: p.assetClass || '', currency: p.currency || '',
+          qty: p.position, avgPrice: isNum(p.avgPrice) ? p.avgPrice : null, mktPrice: isNum(p.mktPrice) ? p.mktPrice : null,
+          mktValue: isNum(p.mktValue) ? p.mktValue : null, unrealizedPnl: isNum(p.unrealizedPnl) ? p.unrealizedPnl : null,
+          chart: ibChartSymbol(p.assetClass, ticker, p.listingExchange),
+        });
+      }
+      if (rows.length < 100) break;
+    }
+    try {
+      const s = (await ib('GET', `/portfolio/${id}/summary`)).json;
+      out.summary = { netLiq: amount(s, 'netliquidation'), cash: amount(s, 'totalcashvalue'), buyingPower: amount(s, 'buyingpower'), unrealizedPnl: amount(s, 'unrealizedpnl'), dayPnl: null };
+    } catch { /* summary is optional */ }
+    if (out.brokerage) { // these two need an active trading session; this app never starts one
+      try {
+        const o = (await ib('GET', '/iserver/account/orders')).json;
+        for (const x of (o && Array.isArray(o.orders) ? o.orders : [])) {
+          if (!WORKING.test(String(x.status || ''))) continue;
+          if (x.acct && x.acct !== id) continue;
+          const price = Number(x.price);
+          out.orders.push({ id: x.orderId, symbol: x.ticker || x.description1 || '', side: String(x.side || '').toUpperCase(), type: x.orderType || '', desc: x.orderDesc || '',
+            status: x.status, remaining: x.remainingQuantity, filled: x.filledQuantity, price: isFinite(price) && price > 0 ? price : null, tif: x.timeInForce || '',
+            chart: ibChartSymbol(x.secType || 'STK', x.ticker, x.listingExchange) });
+        }
+      } catch { /* optional */ }
+      try {
+        const u = (await ib('GET', '/iserver/account/pnl/partitioned')).json;
+        const row = u && u.upnl && (u.upnl[id + '.Core'] || Object.values(u.upnl)[0]);
+        if (row) { if (isNum(row.dpl)) out.summary.dayPnl = row.dpl; if (isNum(row.upl)) out.summary.unrealizedPnl = row.upl; if (out.summary.netLiq == null && isNum(row.nl)) out.summary.netLiq = row.nl; }
+      } catch { /* optional */ }
+    }
+    return out;
+  });
+}
+
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',

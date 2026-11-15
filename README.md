@@ -68,6 +68,27 @@ There is also a ready-made prompt, `watchlist_report`. Or just ask: "write a mor
 
 The watchlist and drawings tools read the data file described below, so open the web app at least once first.
 
+## Interactive Brokers positions (read-only)
+
+The **Positions** tab in the side panel shows your IBKR account: balances, positions with unrealized P&L, and working orders. On the chart, a held symbol gets a dashed line at your average cost, and each working order a line at its price.
+
+It is read-only. The app can only send a fixed list of read requests to IBKR (see `IB_READONLY` in `server.js`); it cannot place, change or cancel orders.
+
+Setup, each trading day:
+
+1. Download IBKR's **Client Portal Gateway** (see IBKR's [Web API documentation](https://www.interactivebrokers.com/docs/web-api)) and unzip it. It needs Java and an IBKR Pro account.
+2. Start it from its folder: `bin\run.bat root\conf.yaml`
+3. Log in at <https://localhost:5000>. A browser certificate warning there is expected. Use your paper-trading username to see the paper account.
+4. Open the Positions tab and press Retry.
+
+Notes:
+
+- Your IBKR password is typed only into IBKR's own login page; this app never sees it.
+- Positions and balances need only IBKR's read-only session, so a TWS or mobile login is not interrupted. Working orders and day P&L appear only if a trading session is already active in the gateway; the app never starts one.
+- The gateway must run on the same computer. Use `--ibkr=https://localhost:5001` (or `IBKR_GATEWAY`) if you changed its port.
+- IBKR logs the gateway out about once a day.
+- The MCP server does not expose account data.
+
 ## Where your data is kept
 
 The watchlist, drawings and indicator settings are stored in the browser and mirrored to a file: `%APPDATA%\Investerview\data.json` on Windows, `~/.config/Investerview/data.json` elsewhere (set `INVESTERVIEW_DATA` to change it). On start-up the file wins, so your data survives a cleared browser and is shared between browsers on the same PC. Copy the file to back it up or move it to another machine.

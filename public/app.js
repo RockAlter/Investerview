@@ -240,6 +240,7 @@ function buildChart(keepRange) {
   chart.subscribeClick((p) => { if (p.point) selectAt(p.point.x, p.point.y); });
   renderChips();
   updateLegend(n - 1);
+  drawIbLines(); if (ib) renderIb();
 }
 
 function applyData() {
@@ -716,6 +717,82 @@ $('#impGo').addEventListener('click', () => {
   impDlg.close(); refreshWatch();
 });
 
+// ---------------------------------------------------------------- IBKR positions (read-only)
+// Data comes from the local server, which reads IBKR's Client Portal Gateway. Nothing here can trade.
+let ib = null, ibTimer = 0, ibLines = [], side = 'watch';
+const money = (v, ccy) => v == null ? '–' : fmtP(v, 2) + (ccy ? ' ' + ccy : '');
+const signed = (v) => v == null ? '–' : (v > 0 ? '+' : '') + fmtP(v, 2);
+async function refreshIb() {
+  clearTimeout(ibTimer);
+  try { ib = await api('/api/ibkr'); } catch { ib = { state: 'unreachable' }; }
+  renderIb(); drawIbLines();
+  // connected: poll every 15 s (this also keeps the gateway session alive). Otherwise only re-check while the tab is open.
+  const delay = ib.state === 'ok' ? 15000 : side === 'pos' ? 60000 : 0;
+  if (delay) ibTimer = setTimeout(refreshIb, delay);
+}
+function renderIb() {
+  const box = $('#sidePos'); box.textContent = '';
+  $('#ibDot').hidden = !(ib && ib.state === 'ok');
+  if (!ib) { box.append(el('p', { textContent: t('Checking…') })); return; }
+  if (ib.state !== 'ok') {
+    const retry = el('button', { className: 'primary', textContent: t('Retry') });
+    retry.addEventListener('click', () => { ib = null; renderIb(); refreshIb(); });
+    if (ib.state === 'login') {
+      box.append(el('p', { textContent: t('The IBKR gateway is running, but you are not logged in.') }),
+        el('p', {}, el('a', { href: 'https://localhost:5000', target: '_blank', rel: 'noopener', textContent: t('Open the gateway login page') })), retry);
+    } else {
+      const steps = el('ol');
+      for (const s of ['Download the Client Portal Gateway from IBKR and unzip it. It needs Java.', 'Start it from its folder: bin\\run.bat root\\conf.yaml', 'Log in at https://localhost:5000 in your browser. A certificate warning there is expected.', 'Come back here and press Retry.']) steps.append(el('li', { textContent: t(s) }));
+      box.append(el('p', { textContent: t('Not connected to Interactive Brokers.') }), steps, retry);
+    }
+    box.append(el('p', { textContent: t('Read-only: this app shows your positions and orders. It cannot place, change or cancel orders.') }));
+    box.lastChild.style.marginTop = '12px';
+    return;
+  }
+  const a = ib.account, s = ib.summary || {};
+  box.append(el('div', { className: 'ibhead' }, el('span', { textContent: a.alias || a.id }),
+    el('span', { className: 'badge ' + (a.paper ? 'paper' : 'live'), textContent: t(a.paper ? 'PAPER' : 'LIVE') }), el('span', { className: 'badge ro', textContent: t('Read-only') })));
+  const sum = el('div', { className: 'ibsum' });
+  const row = (label, val, colour) => { if (val == null) return; sum.append(el('span', { textContent: t(label) }), el('span', { className: colour ? cls(val) : '', textContent: colour ? signed(val) : money(val, a.currency) })); };
+  row('Net liquidation', s.netLiq); row('Day P&L', s.dayPnl, true); row('Unrealized P&L', s.unrealizedPnl, true); row('Cash', s.cash); row('Buying power', s.buyingPower);
+  box.append(sum, el('h4', { textContent: t('Positions') }));
+  if (!ib.positions.length) box.append(el('p', { textContent: t('No open positions.') }));
+  for (const p of ib.positions) {
+    const r = el('div', { className: 'ibrow' + (p.chart ? ' link' : '') + (p.chart && p.chart === state.symbol ? ' on' : '') },
+      el('div', {}, el('b', { textContent: (p.assetClass === 'STK' ? p.symbol : p.desc) || p.symbol }), el('small', { textContent: `${p.qty} @ ${p.avgPrice == null ? '–' : fmtP(p.avgPrice, 2)}` })),
+      el('div', { className: 'r' }, el('span', { textContent: money(p.mktValue, p.currency) }), el('small', { className: cls(p.unrealizedPnl), textContent: signed(p.unrealizedPnl) })));
+    if (p.chart) r.addEventListener('click', () => setSymbol(p.chart));
+    box.append(r);
+  }
+  box.append(el('h4', { textContent: t('Open orders') }));
+  if (!ib.brokerage) box.append(el('p', { textContent: t('Open orders and day P&L appear only while a trading session is active in the gateway. This app never starts one, so a TWS or mobile login is not interrupted.') }));
+  else if (!ib.orders.length) box.append(el('p', { textContent: t('No open orders.') }));
+  for (const o of ib.orders) {
+    const r = el('div', { className: 'ibrow' + (o.chart ? ' link' : '') },
+      el('div', {}, el('b', { className: o.side === 'BUY' ? 'up' : 'down', textContent: `${o.side} ${o.symbol}` }), el('small', { textContent: o.desc || o.type })),
+      el('div', { className: 'r' }, el('span', { textContent: o.price == null ? o.type : fmtP(o.price, 2) }), el('small', { textContent: o.status || '' })));
+    if (o.chart) r.addEventListener('click', () => setSymbol(o.chart));
+    box.append(r);
+  }
+}
+// dashed lines on the chart: average cost of a held position, and the price of each working order
+function drawIbLines() {
+  for (const l of ibLines) if (l.series === S.main) { try { l.series.removePriceLine(l.line); } catch { /* already gone */ } } // lines on a rebuilt chart went with it
+  ibLines = [];
+  if (!ib || ib.state !== 'ok' || !S.main) return;
+  const add = (price, color, title) => { if (price > 0) ibLines.push({ series: S.main, line: S.main.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }) }); };
+  for (const p of ib.positions) if (p.chart === state.symbol) add(p.avgPrice, '#e6c34a', `${t('Avg cost')} · ${p.qty}`);
+  for (const o of ib.orders) if (o.chart === state.symbol) add(o.price, o.side === 'BUY' ? C.up : C.down, `${o.side} ${o.remaining == null ? '' : o.remaining} ${o.type}`.replace(/\s+/g, ' '));
+}
+for (const b of $('#sideTabs').children) {
+  b.addEventListener('click', () => {
+    side = b.dataset.side;
+    for (const x of $('#sideTabs').children) x.classList.toggle('on', x === b);
+    $('#sideWatch').hidden = side !== 'watch'; $('#sidePos').hidden = side !== 'pos';
+    if (side === 'pos' && (!ib || ib.state !== 'ok')) { renderIb(); refreshIb(); }
+  });
+}
+
 // ---------------------------------------------------------------- screener
 const UNIVERSES = {
   'US large caps': 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',
@@ -848,7 +925,7 @@ for (const b of $('#views').children) b.addEventListener('click', () => setView(
 if (!LW) showMsg(t('Could not load the charting library (needs an internet connection). Reload to retry.'));
 else pullState().then(() => {
   setTool('cursor'); renderWatch(); renderGrid();
-  load(); refreshWatch(); requestAnimationFrame(frame);
+  load(); refreshWatch(); refreshIb(); requestAnimationFrame(frame);
   setInterval(() => { if (!document.hidden && state.view === 'chart') load({ refresh: true }); }, 30000);
   setInterval(() => { if (!document.hidden) refreshWatch(); }, 60000);
 });
