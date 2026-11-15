@@ -308,7 +308,13 @@ function updateLegend(i) {
 
 // ---------------------------------------------------------------- loading
 let loadSeq = 0;
-function showMsg(t) { const m = $('#msg'); m.hidden = !t; m.textContent = t || ''; }
+function showMsg(text, withDiag) {
+  const m = $('#msg'); m.hidden = !text; m.textContent = '';
+  if (!text) return;
+  const box = el('div', {}, el('p', { textContent: text }));
+  if (withDiag) box.append(el('p', {}, el('a', { href: '/api/diag', target: '_blank', rel: 'noopener', textContent: t('Show connection diagnostics') })));
+  m.append(box);
+}
 
 async function load({ refresh = false } = {}) {
   const seq = ++loadSeq;
@@ -329,7 +335,11 @@ async function load({ refresh = false } = {}) {
     document.title = `${state.symbol} ${fmtP(j.price)} · ChartDesk`;
   } catch (e) {
     if (seq !== loadSeq) return;
-    if (!refresh) showMsg(e.message + t(' — try another symbol or timeframe.'));
+    if (refresh) return;
+    const refused = /returned (401|403|429)/.exec(e.message), unreachable = /Could not reach/.test(e.message);
+    if (refused) showMsg(t('Yahoo Finance refused the request from this network (HTTP {0}). Try switching your VPN or proxy on or off, or wait a few minutes and reload.', refused[1]), true);
+    else if (unreachable) showMsg(t('Could not connect to Yahoo Finance. Check your internet connection, or whether a VPN or firewall is blocking it.'), true);
+    else showMsg(e.message + t(' — try another symbol or timeframe.'));
   }
 }
 

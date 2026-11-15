@@ -138,6 +138,7 @@ body { grid-template-columns: minmax(0, 1fr); }
 .search { min-width: 70px; }
 @media (max-width: 1150px) { .brand { display: none; } }
 
+#msg div { max-width: 520px; } #msg a { color: var(--accent); }
 #theme { padding: 5px 9px; }
 #ver { margin-top: auto; font-size: 10px; color: var(--muted); cursor: default; }
 

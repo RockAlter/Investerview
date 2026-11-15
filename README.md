@@ -118,6 +118,16 @@ You can also type a company name in the search box.
 - Chart settings such as the last symbol, timeframe and language are stored only in the browser's local storage.
 - This is a charting and screening tool only. It places no trades and nothing in it is investment advice.
 
+## Troubleshooting: no prices, "HTTP 403" or "refused"
+
+Yahoo Finance turns away requests from some networks: certain VPN exit points, corporate or school proxies, cloud and datacenter addresses, and some regions. The app tries four routes before giving up (two Yahoo servers, each with and without a session cookie), so most cases recover on their own. If the chart still shows "Yahoo Finance refused the request":
+
+- Switch your VPN or proxy on or off, or pick a different VPN location, then reload.
+- Wait a few minutes: after many requests Yahoo may block an address temporarily.
+- Open `http://localhost:5178/api/diag` (the "Show connection diagnostics" link) to see what each route returned. It contains no personal data and is safe to share when asking for help.
+
+The app connects to Yahoo directly. It does not use a proxy configured only in your browser or in Windows settings; a VPN in full-tunnel (TUN) mode does apply.
+
 ## Layout
 
 ```

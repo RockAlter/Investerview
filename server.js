@@ -10,7 +10,11 @@ const argVal = (name) => { const a = process.argv.find((x) => x.startsWith(`--${
 const PORT = Number(argVal('port') || process.env.PORT) || 5178;
 const PUB = path.join(__dirname, 'public');
 const YH = 'https://query1.finance.yahoo.com';
-const HEADERS = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' };
+// A complete browser-style header set: Yahoo turns away requests with a bare or unusual User-Agent on some networks.
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  Accept: 'application/json,text/plain,*/*', 'Accept-Language': 'en-US,en;q=0.9',
+};
 const INTERVALS = new Set(['1m', '5m', '15m', '60m', '1d', '1wk', '1mo']);
 const RANGES = new Set(['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'max']);
 const SYMBOL_RE = /^[A-Za-z0-9.\-=^]{1,20}$/;
@@ -29,14 +33,82 @@ function cached(key, ttlMs, fn) {
   return p;
 }
 
+// Yahoo refuses some requests (HTTP 401/403/429) depending on the network they come from.
+// So each request can be tried four ways: two server names, each without and then with a
+// session cookie + "crumb" token, the way Yahoo's own web pages call it. The first way that
+// works is remembered. If every way is refused, further requests fail fast for 30 seconds
+// instead of hammering Yahoo.
+const YH_HOSTS = [YH, 'https://query2.finance.yahoo.com'];
+const YH_STEPS = [[0, false], [1, false], [0, true], [1, true]]; // [host index, use cookie + crumb]
+const REFUSED = new Set([401, 403, 429]);
+const YH_TEST_FAIL = Number(argVal('yahoo-test-fail') || process.env.YH_TEST_FAIL) || 0; // testing only: pretend the first N ways are refused
+let yhStart = 0, yhBlockedUntil = 0, yhBlockedStatus = 0, yhAuth = null;
+
+async function yhSession() {
+  if (yhAuth && yhAuth.exp > Date.now()) return yhAuth;
+  const r = await fetch('https://fc.yahoo.com/', { headers: HEADERS, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+  const cookie = (r.headers.getSetCookie ? r.headers.getSetCookie() : []).map((c) => c.split(';')[0]).join('; ');
+  if (!cookie) throw new Error('no session cookie');
+  let crumb = '';
+  for (const host of YH_HOSTS) {
+    try {
+      const c = await fetch(host + '/v1/test/getcrumb', { headers: { ...HEADERS, Cookie: cookie }, signal: AbortSignal.timeout(10000) });
+      const text = c.ok ? (await c.text()).trim() : '';
+      if (text && text.length < 40 && !text.includes('<')) { crumb = text; break; }
+    } catch { /* try the other host */ }
+  }
+  yhAuth = { cookie, crumb, exp: Date.now() + 3600e3 };
+  return yhAuth;
+}
+async function yhAttempt(step, pathname) {
+  const [hostI, useAuth] = YH_STEPS[step];
+  if (step < YH_TEST_FAIL) return { status: 403, json: null, text: 'simulated refusal' };
+  let url = YH_HOSTS[hostI] + pathname, headers = HEADERS;
+  if (useAuth) {
+    const a = await yhSession();
+    headers = { ...HEADERS, Cookie: a.cookie };
+    if (a.crumb) url += (pathname.includes('?') ? '&' : '?') + 'crumb=' + encodeURIComponent(a.crumb);
+  }
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+  const text = await r.text();
+  let json = null; try { json = JSON.parse(text); } catch { /* an error page, not data */ }
+  return { status: r.status, json, text };
+}
 async function yahoo(pathname) {
-  const r = await fetch(YH + pathname, { headers: HEADERS, signal: AbortSignal.timeout(15000) });
-  const j = await r.json().catch(() => null);
-  if (!j) throw new Error(`Data source returned ${r.status}`);
-  const err = j.chart && j.chart.error;
-  if (err) throw new Error(err.description || 'Data source error');
-  if (!r.ok) throw new Error(`Data source returned ${r.status}`);
-  return j;
+  if (Date.now() < yhBlockedUntil) throw new Error(`Data source returned ${yhBlockedStatus}`);
+  let lastStatus = 0, lastMsg = '', refusedAll = true;
+  for (let k = 0; k < YH_STEPS.length; k++) {
+    const step = (yhStart + k) % YH_STEPS.length;
+    let a;
+    try { a = await yhAttempt(step, pathname); } catch (e) { lastMsg = e.message || 'network error'; refusedAll = false; continue; }
+    const err = a.json && a.json.chart && a.json.chart.error;
+    if (err) throw new Error(err.description || 'Data source error'); // a real answer, e.g. unknown symbol
+    if (a.status >= 200 && a.status < 300 && a.json) { yhStart = step; return a.json; }
+    lastStatus = a.status;
+    if (!REFUSED.has(a.status)) { refusedAll = false; if (a.status < 500) break; }
+  }
+  if (lastStatus && refusedAll) { yhBlockedUntil = Date.now() + 30000; yhBlockedStatus = lastStatus; }
+  throw new Error(lastStatus ? `Data source returned ${lastStatus}` : `Could not reach the data source (${lastMsg})`);
+}
+// What each way of calling Yahoo returns from this computer - for troubleshooting a user's connection.
+async function diagnose() {
+  const test = '/v8/finance/chart/AAPL?interval=1d&range=5d', tries = [];
+  for (let step = 0; step < YH_STEPS.length; step++) {
+    const [hostI, useAuth] = YH_STEPS[step], t0 = Date.now(), row = { server: YH_HOSTS[hostI].slice(8), withCookie: useAuth };
+    try {
+      const a = await yhAttempt(step, test);
+      Object.assign(row, { status: a.status, gotData: !!(a.json && a.json.chart && a.json.chart.result), reply: a.json ? undefined : a.text.replace(/\s+/g, ' ').slice(0, 140) });
+    } catch (e) { row.error = e.message || 'network error'; }
+    row.ms = Date.now() - t0; tries.push(row);
+  }
+  const working = tries.filter((x) => x.gotData).length;
+  return {
+    app: 'Investerview ' + VERSION, time: new Date().toISOString(), node: process.version, platform: process.platform,
+    proxyEnvSet: !!(process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy),
+    cookieObtained: !!(yhAuth && yhAuth.cookie), crumbObtained: !!(yhAuth && yhAuth.crumb),
+    summary: working ? `${working} of ${tries.length} ways of reaching Yahoo Finance work from this computer.` : 'Yahoo Finance is refusing or unreachable from this computer on every route tried.',
+    tries,
+  };
 }
 
 // ---- candles ------------------------------------------------------------
@@ -179,6 +251,7 @@ async function handleApi(url, req, res) {
   }
   if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
   if (url.pathname === '/api/version') return send(res, 200, { version: VERSION });
+  if (url.pathname === '/api/diag') return send(res, 200, await cached('diag', 10000, diagnose));
   if (url.pathname === '/api/ibkr') {
     const want = p.get('account') || '';
     return send(res, 200, await ibkrSnapshot(/^[A-Za-z0-9]{1,20}$/.test(want) ? want : ''));
@@ -347,7 +420,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.4.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '1.4.1'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',

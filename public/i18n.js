@@ -54,6 +54,15 @@ const T = {
   'Loading {0}…': ['正在加载 {0}…', '正在載入 {0}…', '{0} を読み込み中…'],
   'No data for {0} on this timeframe': ['{0} 在该周期没有数据', '{0} 在此週期沒有資料', '{0} のこの時間足のデータがありません'],
   ' — try another symbol or timeframe.': ['，请尝试其他代码或周期。', '，請嘗試其他代號或週期。', '。別の銘柄または時間足をお試しください。'],
+  'Yahoo Finance refused the request from this network (HTTP {0}). Try switching your VPN or proxy on or off, or wait a few minutes and reload.': [
+    'Yahoo Finance 拒绝了来自当前网络的请求 (HTTP {0})。请尝试开启或关闭 VPN / 代理，或等待几分钟后刷新。',
+    'Yahoo Finance 拒絕了來自目前網路的請求 (HTTP {0})。請嘗試開啟或關閉 VPN / 代理，或等待幾分鐘後重新整理。',
+    'Yahoo Finance がこのネットワークからのリクエストを拒否しました (HTTP {0})。VPN やプロキシのオン/オフを切り替えるか、数分待ってから再読み込みしてください。'],
+  'Could not connect to Yahoo Finance. Check your internet connection, or whether a VPN or firewall is blocking it.': [
+    '无法连接到 Yahoo Finance。请检查网络连接，或是否被 VPN / 防火墙拦截。',
+    '無法連線到 Yahoo Finance。請檢查網路連線，或是否被 VPN / 防火牆攔截。',
+    'Yahoo Finance に接続できません。インターネット接続、または VPN やファイアウォールによる遮断を確認してください。'],
+  'Show connection diagnostics': ['查看连接诊断', '查看連線診斷', '接続診断を表示'],
   'Could not load the charting library (needs an internet connection). Reload to retry.': [
     '无法加载图表库（需要联网）。请刷新重试。', '無法載入圖表庫（需要連線）。請重新整理再試。', 'チャートライブラリを読み込めませんでした（インターネット接続が必要です）。再読み込みしてください。'],
   'Pre-market': ['盘前', '盤前', 'プレマーケット'],
