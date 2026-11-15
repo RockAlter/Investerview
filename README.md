@@ -1,8 +1,11 @@
 # Investerview
 
+**English** | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md)
+
 A trading screening app: local charting and stock screening in the browser (the UI calls itself **ChartDesk**). It runs on your own machine, needs no account or API key, and has no dependencies beyond Node.js.
 
-**Web version:** <https://rockalter.github.io/Investerview/> runs in the browser with nothing to install, but shows **crypto only** (prices straight from Binance or Coinbase). A web page cannot fetch stock prices by itself, so stocks, indices, FX, futures, extended hours, IBKR positions, the data file and the MCP server need the desktop app below. The web version keeps its watchlist and drawings in that browser only. It is the `public/` folder published to the `gh-pages` branch; `public/web-data.js` is its data layer.
+- **Desktop app (everything):** download `Investerview.exe` from the [latest release](https://github.com/RockAlter/Investerview/releases/latest), or run it from source as described below.
+- **Web version (crypto only):** <https://rockalter.github.io/Investerview/> — nothing to install, but limited. See [Web version and its limits](#web-version-and-its-limits).
 
 ## Features
 
@@ -16,6 +19,32 @@ A trading screening app: local charting and stock screening in the browser (the 
 - **Watchlist** — sections, drag-to-reorder, live last price and daily change.
 - **Import** — reads a watchlist exported from TradingView (`EXCHANGE:SYMBOL` text, including `###Section` headings) and converts the symbols.
 - **Screener** — scan US large caps, ETFs, crypto, FX/commodities, Japan large caps, your watchlist or a custom list; filter by price, change %, RSI, relative volume, distance from 52-week high and position against the 50/200-day averages.
+
+## Web version and its limits
+
+<https://rockalter.github.io/Investerview/> is the same interface published on GitHub Pages. It opens in any browser with nothing to install, but it **shows crypto only**.
+
+**Why.** Browsers do not let a web page read data from another website unless that website explicitly allows it (the CORS rule). Among free price sources, only the crypto exchanges allow it; Yahoo Finance and the other stock sources do not. The desktop app is not a web page, so it can fetch from them and hand the data to the page on your own computer. GitHub Pages can only serve files and cannot run that program.
+
+| | Web version | Desktop app |
+|---|---|---|
+| Crypto (`BTC-USD`, `ETH-USD`, …) | Yes, from Binance or Coinbase | Yes |
+| Stocks, ETFs, indices, FX, futures | **No** | Yes |
+| Extended-hours prices | No | Yes |
+| Symbol search | About 40 well-known coins; any other works when typed in full, e.g. `WIF-USD` | Everything Yahoo lists |
+| Screener | Crypto, your watchlist, or a custom list of coins | All built-in lists |
+| Watchlist import | No | Yes |
+| IBKR positions and orders | No | Yes |
+| MCP server for AI apps | No | Yes |
+| Where your watchlist and drawings are kept | In that browser only: not backed up, and not shared with other browsers, devices or the desktop app | In the browser and in a data file on disk |
+| Chart types, indicators, drawing tools, languages, themes | Yes | Yes |
+
+Other things to know about the web version:
+
+- Crypto prices come from a single exchange (Binance; Coinbase if Binance cannot be reached), so they can differ slightly from the desktop app, which uses Yahoo.
+- Binance is not reachable from some countries. Coinbase then takes over, with less history (300 bars per chart).
+- Typing a stock symbol shows a message with a link to the desktop app.
+- The web version is the `public/` folder published to the `gh-pages` branch; `public/web-data.js` is its data layer.
 
 ## Run it
 
@@ -70,7 +99,7 @@ Running from source instead: `"command": "node", "args": ["C:\\path\\to\\server.
 
 There is also a ready-made prompt, `watchlist_report`. Or just ask: "write a morning report on my Investerview watchlist".
 
-The watchlist and drawings tools read the data file described below, so open the web app at least once first.
+The watchlist and drawings tools read the data file described below, so open the desktop app at least once first.
 
 ## Interactive Brokers positions (read-only)
 
@@ -95,7 +124,9 @@ Notes:
 
 ## Where your data is kept
 
-The watchlist, drawings and indicator settings are stored in the browser and mirrored to a file: `%APPDATA%\Investerview\data.json` on Windows, `~/.config/Investerview/data.json` elsewhere (set `INVESTERVIEW_DATA` to change it). On start-up the file wins, so your data survives a cleared browser and is shared between browsers on the same PC. Copy the file to back it up or move it to another machine.
+In the desktop app, the watchlist, drawings and indicator settings are stored in the browser and mirrored to a file: `%APPDATA%\Investerview\data.json` on Windows, `~/.config/Investerview/data.json` elsewhere (set `INVESTERVIEW_DATA` to change it). On start-up the file wins, so your data survives a cleared browser and is shared between browsers on the same PC. Copy the file to back it up or move it to another machine.
+
+The web version has no data file: everything stays in that browser's local storage.
 
 ## Symbols
 
@@ -104,8 +135,8 @@ The watchlist, drawings and indicator settings are stored in the browser and mir
 | US stocks / ETFs | `AAPL`, `BRK-B`, `SPY` |
 | Tokyo | `7203.T` |
 | Hong Kong | `0700.HK` |
-| London / Xetra / Toronto | `RR.L`, `RHM.DE`, `RY.TO` |
-| Indices | `^GSPC`, `^NDX`, `^N225`, `^VIX` |
+| London / Xetra / Paris / Toronto | `RR.L`, `RHM.DE`, `MC.PA`, `RY.TO` |
+| Indices | `^GSPC`, `^NDX`, `^N225`, `^FTSE`, `^VIX` |
 | Crypto | `BTC-USD` |
 | FX | `EURUSD=X` |
 | Futures | `ES=F`, `GC=F` |
@@ -130,24 +161,27 @@ Yahoo Finance turns away requests from some networks: certain VPN exit points, c
 
 ### Backup data sources
 
-When Yahoo refuses or cannot be reached, the app switches to other public sources by itself, and the chart shows a "Backup data" tag naming the one in use:
+When Yahoo refuses or cannot be reached, the desktop app switches to other public sources by itself, and the chart shows a "Backup data" tag naming the one in use:
 
 | Source | Covers | Timeframes |
 |---|---|---|
 | Binance, then Coinbase | Crypto priced in USD (`BTC-USD`) | All |
 | Nasdaq | US stocks and ETFs | Daily, weekly, monthly (10 years) |
-| Eastmoney | US, Hong Kong and mainland China stocks; major indices; FX; the main futures | All, with about 3 weeks of intraday history |
+| Eastmoney (experimental) | US, Hong Kong and mainland China stocks; major indices; FX; the main futures | All, with about 3 weeks of intraday history |
 
-Limits while on backup data: no extended-hours prices, no symbol search (type the ticker itself), no company names, and no data for Tokyo and most other non-US exchanges or for `^VIX`. Prices can differ slightly from Yahoo's (crypto comes from one exchange; adjustments for dividends differ). Eastmoney cuts off addresses that send many requests quickly, so the app calls it one request at a time and leaves it alone for two minutes after a failure; a long watchlist of indices and futures fills in slowly.
+Limits while on backup data: no extended-hours prices, no symbol search (type the ticker itself), no company names, and no data for Tokyo, European and most other non-US exchanges or for `^VIX`. Prices can differ slightly from Yahoo's (crypto comes from one exchange; adjustments for dividends differ). Eastmoney cuts off addresses that send many requests quickly, so the app calls it one request at a time and leaves it alone for two minutes after a failure; a long watchlist of indices and futures fills in slowly. It has been tested against recorded data only, not live.
 
 The app connects to Yahoo directly. It does not use a proxy configured only in your browser or in Windows settings; a VPN in full-tunnel (TUN) mode does apply.
 
 ## Layout
 
 ```
-server.js          local web server + market-data proxy (no dependencies)
-public/index.html  page markup
-public/app.js      charts, indicators, drawings, watchlist, screener
-public/style.css   styles
-start.bat          Windows launcher
+server.js            local web server + market-data proxy + MCP server (no dependencies)
+build-exe.js         builds dist/Investerview.exe
+public/index.html    page markup
+public/app.js        charts, indicators, drawings, watchlist, screener
+public/i18n.js       interface translations
+public/web-data.js   data layer of the web version (crypto, fetched in the browser)
+public/style.css     styles
+start.bat            Windows launcher
 ```
