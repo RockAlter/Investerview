@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChartDesk</title>
+<script>
+// set the theme before the page paints, so there is no dark flash in light mode
+(function () { var t = null; try { t = JSON.parse(localStorage.getItem('cd.theme')); } catch (e) {}
+  document.documentElement.dataset.theme = t === 'light' || t === 'dark' ? t : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'); })();
+</script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand">Chart<span>Desk</span></div>
+  <div class="search">
+    <input id="sym" placeholder="Search symbol or company…" data-i18n-ph autocomplete="off" spellcheck="false">
+    <ul id="results" hidden></ul>
+  </div>
+  <nav id="tfs" class="seg"></nav>
+  <select id="type" title="Chart type" data-i18n-title>
+    <option value="candles" data-i18n>Candles</option>
+    <option value="heikin" data-i18n>Heikin Ashi</option>
+    <option value="bars" data-i18n>Bars</option>
+    <option value="line" data-i18n>Line</option>
+    <option value="area" data-i18n>Area</option>
+  </select>
+  <div class="menu">
+    <button id="indBtn" data-i18n>Indicators ▾</button>
+    <ul id="indMenu" hidden></ul>
+  </div>
+  <label class="chk"><input type="checkbox" id="log"> <span data-i18n>Log</span></label>
+  <label class="chk" title="Show pre-market and after-hours trading on the 1m–1h charts (shaded) and in the watchlist. Stocks and ETFs only." data-i18n-title><input type="checkbox" id="ext"> <span data-i18n>Ext. hours</span></label>
+  <span class="spacer"></span>
+  <a id="webNote" class="tag" target="_blank" rel="noopener" hidden></a>
+  <select id="lang" title="Language" data-i18n-title>
+    <option value="auto" data-i18n>Auto</option>
+    <option value="en">English</option>
+    <option value="zh-CN">简体中文</option>
+    <option value="zh-TW">繁體中文</option>
+    <option value="ja">日本語</option>
+  </select>
+  <button id="theme" title="Switch between light and dark theme" data-i18n-title>☀</button>
+  <nav id="views" class="seg">
+    <button data-view="chart" class="on" data-i18n>Chart</button>
+    <button data-view="screener" data-i18n>Screener</button>
+  </nav>
+</header>
+
+<main id="chartView">
+  <aside id="tools"></aside>
+  <section id="stage">
+    <div id="chart"></div>
+    <canvas id="draw"></canvas>
+    <div id="legend">
+      <div class="row1"><b id="lgSym"></b><span id="lgName"></span><a id="lgSrc" class="tag" href="/api/diag" target="_blank" rel="noopener" hidden></a><span id="lgOhlc"></span></div>
+      <div id="chips"></div>
+    </div>
+    <div id="hint" hidden></div>
+    <div id="msg" hidden></div>
+  </section>
+  <aside id="watch">
+    <nav id="sideTabs" class="seg">
+      <button data-side="watch" class="on" data-i18n>Watchlist</button>
+      <button data-side="pos"><span data-i18n>Positions</span><i id="ibDot" hidden></i></button>
+    </nav>
+    <div id="sidePos" hidden></div>
+    <div id="sideWatch">
+    <div class="whead"><span data-i18n>Watchlist</span><span><button id="impWatch" title="Import a watchlist exported from another charting app" data-i18n-title data-i18n>Import</button> <button id="addSec" title="Add a section heading" data-i18n-title data-i18n>+ Section</button> <button id="addWatch" title="Add the charted symbol" data-i18n-title data-i18n>+ Add</button></span></div>
+    <ul id="wlist"></ul>
+    </div>
+  </aside>
+</main>
+
+<main id="screenView" hidden>
+  <div class="sbar">
+    <label><span data-i18n>Universe</span> <select id="uni"></select></label>
+    <input id="uniCustom" placeholder="Symbols, comma separated (e.g. AAPL, SHOP, BTC-USD)" data-i18n-ph hidden>
+    <label><span data-i18n>Preset</span> <select id="preset"></select></label>
+    <button id="scan" class="primary" data-i18n>Scan</button>
+    <span id="scanInfo"></span>
+  </div>
+  <div class="filters" id="filters">
+    <label><span data-i18n>Price</span> <input data-f="priceMin" type="number" placeholder="min" data-i18n-ph><input data-f="priceMax" type="number" placeholder="max" data-i18n-ph></label>
+    <label><span data-i18n>Change %</span> <input data-f="chgMin" type="number" placeholder="min" data-i18n-ph><input data-f="chgMax" type="number" placeholder="max" data-i18n-ph></label>
+    <label>RSI <input data-f="rsiMin" type="number" placeholder="min" data-i18n-ph><input data-f="rsiMax" type="number" placeholder="max" data-i18n-ph></label>
+    <label><span data-i18n>Rel. volume ≥</span> <input data-f="relVolMin" type="number" step="0.1" placeholder="1.5"></label>
+    <label><span data-i18n>Within</span> <input data-f="nearHigh" type="number" placeholder="%"> <span data-i18n>% of 52w high</span></label>
+    <label class="chk"><input data-f="above50" type="checkbox"> <span data-i18n>Above SMA 50</span></label>
+    <label class="chk"><input data-f="above200" type="checkbox"> <span data-i18n>Above SMA 200</span></label>
+    <button id="resetF" data-i18n>Reset filters</button>
+  </div>
+  <div class="tablewrap">
+    <table id="grid"><thead></thead><tbody></tbody></table>
+    <div id="gridEmpty" hidden></div>
+  </div>
+</main>
+
+<dialog id="impDlg">
+  <h3 data-i18n>Import watchlist</h3>
+  <p class="muted" data-i18n>Choose an exported watchlist file (.txt or .csv), or paste symbols below — e.g. NASDAQ:AAPL, NYSE:BRK.B, BINANCE:BTCUSDT</p>
+  <input id="impFile" type="file" accept=".txt,.csv,text/plain">
+  <textarea id="impText" rows="6" placeholder="Paste symbols here" data-i18n-ph spellcheck="false"></textarea>
+  <label class="chk"><input id="impReplace" type="checkbox"> <span data-i18n>Replace my current watchlist instead of adding to it</span></label>
+  <div id="impInfo" class="muted"></div>
+  <div class="dlgBtns"><button id="impCancel" data-i18n>Cancel</button><button id="impGo" class="primary" data-i18n>Import</button></div>
+</dialog>
+
+<script src="https://unpkg.com/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js"></script>
+<script src="i18n.js"></script>
+<script src="web-data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
