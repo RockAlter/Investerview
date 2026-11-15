@@ -178,6 +178,7 @@ async function handleApi(url, req, res) {
     return send(res, 200, { ok: true });
   }
   if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+  if (url.pathname === '/api/version') return send(res, 200, { version: VERSION });
   if (url.pathname === '/api/ibkr') {
     const want = p.get('account') || '';
     return send(res, 200, await ibkrSnapshot(/^[A-Za-z0-9]{1,20}$/.test(want) ? want : ''));
@@ -346,7 +347,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.3.0';
+const VERSION = '1.4.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',
@@ -598,7 +599,7 @@ server.on('error', (e) => {
 });
 if (process.argv.includes('--mcp')) startMcp(); // AI-tool mode: no web server, talk MCP on stdin/stdout
 else server.listen(PORT, '127.0.0.1', () => {
-  console.log(`ChartDesk running at ${URL_LOCAL}`);
+  console.log(`Investerview ${VERSION} running at ${URL_LOCAL}`);
   if (sea) console.log('Keep this window open while you use the app. Close it to stop.');
   openBrowser();
 });

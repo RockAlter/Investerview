@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ChartDesk</title>
+<script>
+// set the theme before the page paints, so there is no dark flash in light mode
+(function () { var t = null; try { t = JSON.parse(localStorage.getItem('cd.theme')); } catch (e) {}
+  document.documentElement.dataset.theme = t === 'light' || t === 'dark' ? t : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'); })();
+</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -35,6 +40,7 @@
     <option value="zh-TW">繁體中文</option>
     <option value="ja">日本語</option>
   </select>
+  <button id="theme" title="Switch between light and dark theme" data-i18n-title>☀</button>
   <nav id="views" class="seg">
     <button data-view="chart" class="on" data-i18n>Chart</button>
     <button data-view="screener" data-i18n>Screener</button>

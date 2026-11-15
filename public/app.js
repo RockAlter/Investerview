@@ -46,7 +46,15 @@ async function api(path) {
   return j;
 }
 
-const C = { bg: '#0f1216', grid: '#1a2029', border: '#262e3a', text: '#8f9bab', up: '#2fbf71', down: '#f0524f', accent: '#4c8dff' };
+// Chart and canvas colours come from the stylesheet's variables, so they follow the light/dark theme.
+const C = {};
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement), v = (n) => cs.getPropertyValue(n).trim();
+  Object.assign(C, { bg: v('--bg'), grid: v('--grid'), border: v('--border'), border2: v('--border2'), text: v('--axis'), up: v('--up'), down: v('--down'),
+    accent: v('--accent'), label: v('--overlay'), handle: v('--handle'), cost: v('--cost') });
+}
+readTheme();
+const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
 const PALETTE = ['#f5a524', '#b47cff', '#35c2d6', '#ff7ab6', '#9bd24a', '#ff8a4c'];
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const IND = {
@@ -175,15 +183,16 @@ function makeIndicator(ind, color, nextPane) {
   if (ind.type === 'VOL') {
     const s = chart.addSeries(LW.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', priceLineVisible: false, lastValueVisible: false });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    const volUp = rgba(C.up, 0.35), volDown = rgba(C.down, 0.35);
     return { ind, color, vals: [], isVol: true, apply(d) {
-      s.setData(d.map((b) => ({ time: b.time, value: b.volume, color: b.close >= b.open ? 'rgba(47,191,113,.35)' : 'rgba(240,82,79,.35)' })));
+      s.setData(d.map((b) => ({ time: b.time, value: b.volume, color: b.close >= b.open ? volUp : volDown })));
       this.vals = [d.map((b) => b.volume)];
     } };
   }
   if (ind.type === 'RSI') {
     const pane = nextPane();
     const s = chart.addSeries(LW.LineSeries, { ...lineOpts(color), lastValueVisible: true, priceFormat: { type: 'price', precision: 1, minMove: 0.1 } }, pane);
-    for (const lvl of [70, 30]) s.createPriceLine({ price: lvl, color: '#3a4656', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+    for (const lvl of [70, 30]) s.createPriceLine({ price: lvl, color: C.border2, lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
     return { ind, color, pane, fixed: 1, vals: [], apply(d, c) { const a = rsi(c, ind.period); s.setData(toLine(d, a)); this.vals = [a]; } };
   }
   if (ind.type === 'MACD') {
@@ -193,7 +202,7 @@ function makeIndicator(ind, color, nextPane) {
     const sg = chart.addSeries(LW.LineSeries, lineOpts('#f5a524'), pane);
     return { ind, color: C.accent, pane, vals: [], apply(d, c) {
       const m = macd(c);
-      h.setData(d.map((b, i) => m.hist[i] == null ? null : { time: b.time, value: m.hist[i], color: m.hist[i] >= 0 ? 'rgba(47,191,113,.6)' : 'rgba(240,82,79,.6)' }).filter(Boolean));
+      h.setData(d.map((b, i) => m.hist[i] == null ? null : { time: b.time, value: m.hist[i], color: rgba(m.hist[i] >= 0 ? C.up : C.down, 0.6) }).filter(Boolean));
       l.setData(toLine(d, m.line)); sg.setData(toLine(d, m.signal));
       this.vals = [m.line, m.signal, m.hist];
     } };
@@ -219,7 +228,7 @@ function buildChart(keepRange) {
   const pf = { priceFormat: { type: 'price', precision: pr, minMove: 1 / 10 ** pr } };
   const ud = { upColor: C.up, downColor: C.down };
   if (state.type === 'line') S.main = chart.addSeries(LW.LineSeries, { color: C.accent, lineWidth: 2, ...pf });
-  else if (state.type === 'area') S.main = chart.addSeries(LW.AreaSeries, { lineColor: C.accent, topColor: 'rgba(76,141,255,.35)', bottomColor: 'rgba(76,141,255,0)', lineWidth: 2, ...pf });
+  else if (state.type === 'area') S.main = chart.addSeries(LW.AreaSeries, { lineColor: C.accent, topColor: rgba(C.accent, 0.35), bottomColor: rgba(C.accent, 0), lineWidth: 2, ...pf });
   else if (state.type === 'bars') S.main = chart.addSeries(LW.BarSeries, { ...ud, ...pf });
   else S.main = chart.addSeries(LW.CandlestickSeries, { ...ud, borderVisible: false, wickUpColor: C.up, wickDownColor: C.down, ...pf });
 
@@ -345,6 +354,19 @@ for (const k of Object.keys(TF)) {
 $('#type').value = state.type;
 $('#type').addEventListener('change', (e) => { state.type = e.target.value; store.set('type', state.type); if (state.data.length) buildChart(true); });
 $('#log').checked = state.log;
+// light / dark theme: follows the system setting until the user picks one with the button
+let theme = store.get('theme', null);
+const sysLight = window.matchMedia('(prefers-color-scheme: light)');
+function applyTheme(redraw) {
+  const th = theme === 'light' || theme === 'dark' ? theme : sysLight.matches ? 'light' : 'dark';
+  document.documentElement.dataset.theme = th;
+  readTheme();
+  $('#theme').textContent = th === 'dark' ? '☀' : '☾';
+  if (redraw) { if (chart && state.data.length) buildChart(true); renderGrid(); }
+}
+$('#theme').addEventListener('click', () => { theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'; store.set('theme', theme); applyTheme(true); });
+sysLight.addEventListener('change', () => { if (!theme) applyTheme(true); });
+applyTheme(false);
 $('#ext').checked = state.ext;
 $('#ext').addEventListener('change', (e) => { state.ext = e.target.checked; store.set('ext', state.ext); load(); refreshWatch(); });
 $('#log').addEventListener('change', (e) => { state.log = e.target.checked; store.set('log', state.log); if (chart) chart.priceScale('right').applyOptions({ mode: state.log ? 1 : 0 }); });
@@ -425,6 +447,9 @@ toolsEl.append(el('hr'));
 const delBtn = el('button', { title: t('Delete selected drawing, or all drawings on this symbol if none is selected (Del)'), innerHTML: svg('<path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/>') });
 delBtn.addEventListener('click', () => removeDrawings());
 toolsEl.append(delBtn);
+// version of the running app, always visible at the bottom of the toolbar
+const verEl = el('span', { id: 'ver' }); toolsEl.append(verEl);
+api('/api/version').then((v) => { verEl.textContent = 'v' + v.version; verEl.title = 'Investerview ' + v.version; }).catch(() => {});
 
 function setTool(id) {
   state.tool = id; draft = null;
@@ -521,7 +546,7 @@ function selectAt(x, y) {
 function label(text, x, y, color, align = 'left') {
   ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = align; ctx.textBaseline = 'middle';
   const w = ctx.measureText(text).width + 8, bx = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
-  ctx.fillStyle = 'rgba(15,18,22,.85)'; ctx.fillRect(bx, y - 8, w, 16);
+  ctx.fillStyle = C.label; ctx.fillRect(bx, y - 8, w, 16);
   ctx.fillStyle = color; ctx.fillText(text, align === 'right' ? x - 4 : align === 'center' ? x : x + 4, y);
 }
 function drawOne(d, g, isDraft) {
@@ -553,7 +578,7 @@ function drawOne(d, g, isDraft) {
     const dp = d.b.price - d.a.price, bars = Math.round(timeToLogical(d.b.time) - timeToLogical(d.a.time));
     label(`${dp >= 0 ? '+' : ''}${fmtP(dp)}  (${fmtPct(dp / d.a.price * 100)})  ·  ${bars} ${t('bars')}`, (a.x + b.x) / 2, Math.min(a.y, b.y) - 12, c, 'center');
   }
-  if (sel) { ctx.fillStyle = '#fff'; for (const h of handles) { ctx.beginPath(); ctx.arc(h.x, h.y, 3.5, 0, 7); ctx.fill(); } }
+  if (sel) { ctx.fillStyle = C.handle; for (const h of handles) { ctx.beginPath(); ctx.arc(h.x, h.y, 3.5, 0, 7); ctx.fill(); } }
 }
 function frame() {
   requestAnimationFrame(frame);
@@ -781,7 +806,7 @@ function drawIbLines() {
   ibLines = [];
   if (!ib || ib.state !== 'ok' || !S.main) return;
   const add = (price, color, title) => { if (price > 0) ibLines.push({ series: S.main, line: S.main.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }) }); };
-  for (const p of ib.positions) if (p.chart === state.symbol) add(p.avgPrice, '#e6c34a', `${t('Avg cost')} · ${p.qty}`);
+  for (const p of ib.positions) if (p.chart === state.symbol) add(p.avgPrice, C.cost, `${t('Avg cost')} · ${p.qty}`);
   for (const o of ib.orders) if (o.chart === state.symbol) add(o.price, o.side === 'BUY' ? C.up : C.down, `${o.side} ${o.remaining == null ? '' : o.remaining} ${o.type}`.replace(/\s+/g, ' '));
 }
 for (const b of $('#sideTabs').children) {
