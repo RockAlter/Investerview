@@ -2,6 +2,8 @@
 
 A trading screening app: local charting and stock screening in the browser (the UI calls itself **ChartDesk**). It runs on your own machine, needs no account or API key, and has no dependencies beyond Node.js.
 
+**Web version:** <https://rockalter.github.io/Investerview/> runs in the browser with nothing to install, but shows **crypto only** (prices straight from Binance or Coinbase). A web page cannot fetch stock prices by itself, so stocks, indices, FX, futures, extended hours, IBKR positions, the data file and the MCP server need the desktop app below. The web version keeps its watchlist and drawings in that browser only. It is the `public/` folder published to the `gh-pages` branch; `public/web-data.js` is its data layer.
+
 ## Features
 
 - **Charts** — candles, Heikin Ashi, bars, line or area; timeframes from 1 minute to 1 month; log scale.
@@ -112,7 +114,7 @@ You can also type a company name in the search box.
 
 ## Data source and limits
 
-- Prices come from Yahoo Finance's public web endpoints, proxied by `server.js`. They are unofficial and unsupported: they can change, rate-limit or stop working, and quotes may be delayed (15–20 minutes on some exchanges).
+- Prices come from Yahoo Finance's public web endpoints, proxied by `server.js`, with backup sources when Yahoo is unavailable (see Troubleshooting). They are unofficial and unsupported: they can change, rate-limit or stop working, and quotes may be delayed (15–20 minutes on some exchanges).
 - Intraday history is limited: about 5 days of 1-minute bars, a month of 5/15-minute bars and 6 months of hourly bars.
 - The chart library ([Lightweight Charts](https://github.com/tradingview/lightweight-charts), Apache-2.0) loads from a CDN, so the app needs an internet connection.
 - Chart settings such as the last symbol, timeframe and language are stored only in the browser's local storage.
@@ -125,6 +127,18 @@ Yahoo Finance turns away requests from some networks: certain VPN exit points, c
 - Switch your VPN or proxy on or off, or pick a different VPN location, then reload.
 - Wait a few minutes: after many requests Yahoo may block an address temporarily.
 - Open `http://localhost:5178/api/diag` (the "Show connection diagnostics" link) to see what each route returned. It contains no personal data and is safe to share when asking for help.
+
+### Backup data sources
+
+When Yahoo refuses or cannot be reached, the app switches to other public sources by itself, and the chart shows a "Backup data" tag naming the one in use:
+
+| Source | Covers | Timeframes |
+|---|---|---|
+| Binance, then Coinbase | Crypto priced in USD (`BTC-USD`) | All |
+| Nasdaq | US stocks and ETFs | Daily, weekly, monthly (10 years) |
+| Eastmoney | US, Hong Kong and mainland China stocks; major indices; FX; the main futures | All, with about 3 weeks of intraday history |
+
+Limits while on backup data: no extended-hours prices, no symbol search (type the ticker itself), no company names, and no data for Tokyo and most other non-US exchanges or for `^VIX`. Prices can differ slightly from Yahoo's (crypto comes from one exchange; adjustments for dividends differ). Eastmoney cuts off addresses that send many requests quickly, so the app calls it one request at a time and leaves it alone for two minutes after a failure; a long watchlist of indices and futures fills in slowly.
 
 The app connects to Yahoo directly. It does not use a proxy configured only in your browser or in Windows settings; a VPN in full-tunnel (TUN) mode does apply.
 

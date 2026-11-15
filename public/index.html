@@ -33,6 +33,7 @@
   <label class="chk"><input type="checkbox" id="log"> <span data-i18n>Log</span></label>
   <label class="chk" title="Show pre-market and after-hours trading on the 1m–1h charts (shaded) and in the watchlist. Stocks and ETFs only." data-i18n-title><input type="checkbox" id="ext"> <span data-i18n>Ext. hours</span></label>
   <span class="spacer"></span>
+  <a id="webNote" class="tag" target="_blank" rel="noopener" hidden></a>
   <select id="lang" title="Language" data-i18n-title>
     <option value="auto" data-i18n>Auto</option>
     <option value="en">English</option>
@@ -53,7 +54,7 @@
     <div id="chart"></div>
     <canvas id="draw"></canvas>
     <div id="legend">
-      <div class="row1"><b id="lgSym"></b><span id="lgName"></span><span id="lgOhlc"></span></div>
+      <div class="row1"><b id="lgSym"></b><span id="lgName"></span><a id="lgSrc" class="tag" href="/api/diag" target="_blank" rel="noopener" hidden></a><span id="lgOhlc"></span></div>
       <div id="chips"></div>
     </div>
     <div id="hint" hidden></div>
@@ -108,6 +109,7 @@
 
 <script src="https://unpkg.com/lightweight-charts@5.0.8/dist/lightweight-charts.standalone.production.js"></script>
 <script src="i18n.js"></script>
+<script src="web-data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

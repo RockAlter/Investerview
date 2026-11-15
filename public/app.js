@@ -19,8 +19,11 @@ const store = {
 // server, so they survive a cleared browser and the MCP server can read them. The file wins on start-up.
 const SYNCED = new Set(['watch', 'drawings', 'collapsed', 'indicators']);
 let syncReady = false, pushTimer = 0;
+// Web version (opened from a website such as GitHub Pages, not from the desktop app): there is no
+// local server, so web-data.js fetches prices in the browser. That covers crypto only.
+const WEB = !!window.WebData && (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || new URLSearchParams(location.search).has('web'));
 function pushState() {
-  if (!syncReady) return;
+  if (!syncReady || WEB) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -40,6 +43,7 @@ async function pullState() {
   } catch { syncReady = true; }
 }
 async function api(path) {
+  if (WEB) return window.WebData.api(path);
   const r = await fetch(path);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || 'Request failed');
@@ -65,10 +69,11 @@ const IND = {
   RSI: { name: 'RSI', period: 14 },
   MACD: { name: 'MACD (12, 26, 9)' },
 };
-const DEFAULT_WATCH = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD', 'EURUSD=X', 'GC=F'];
+const DEFAULT_WATCH = WEB ? ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'AVAX-USD', 'LINK-USD', 'LTC-USD']
+  : ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD', 'EURUSD=X', 'GC=F'];
 
 const state = {
-  symbol: store.get('symbol', 'AAPL'),
+  symbol: store.get('symbol', WEB ? 'BTC-USD' : 'AAPL'),
   tf: store.get('tf', '1D'),
   type: store.get('type', 'candles'),
   log: store.get('log', false),
@@ -290,7 +295,10 @@ function renderChips() {
 function updateLegend(i) {
   const d = state.data, b = d[i];
   $('#lgSym').textContent = state.symbol;
-  $('#lgName').textContent = [state.meta.name, state.meta.exchange, state.tf].filter(Boolean).join(' · ');
+  $('#lgName').textContent = [state.meta.name !== state.symbol && state.meta.name, state.meta.exchange, state.tf].filter(Boolean).join(' · ');
+  const src = $('#lgSrc'), backup = state.meta.source && state.meta.source !== 'Yahoo Finance';
+  src.hidden = !backup || WEB; // the web version names its source in the legend line instead
+  if (backup) { src.textContent = t('Backup data: {0}', state.meta.source); src.title = t('Yahoo Finance is not available from this network, so prices come from a backup source. Extended hours and symbol search need Yahoo.'); }
   const box = $('#lgOhlc'); box.textContent = '';
   if (!b) return;
   const prev = d[i - 1], chg = prev ? (b.close / prev.close - 1) * 100 : null;
@@ -312,7 +320,8 @@ function showMsg(text, withDiag) {
   const m = $('#msg'); m.hidden = !text; m.textContent = '';
   if (!text) return;
   const box = el('div', {}, el('p', { textContent: text }));
-  if (withDiag) box.append(el('p', {}, el('a', { href: '/api/diag', target: '_blank', rel: 'noopener', textContent: t('Show connection diagnostics') })));
+  if (withDiag === 'download') box.append(el('p', {}, el('a', { href: window.WebData.DOWNLOAD, target: '_blank', rel: 'noopener', textContent: t('Get the desktop app') })));
+  else if (withDiag) box.append(el('p', {}, el('a', { href: '/api/diag', target: '_blank', rel: 'noopener', textContent: t('Show connection diagnostics') })));
   m.append(box);
 }
 
@@ -337,7 +346,8 @@ async function load({ refresh = false } = {}) {
     if (seq !== loadSeq) return;
     if (refresh) return;
     const refused = /returned (401|403|429)/.exec(e.message), unreachable = /Could not reach/.test(e.message);
-    if (refused) showMsg(t('Yahoo Finance refused the request from this network (HTTP {0}). Try switching your VPN or proxy on or off, or wait a few minutes and reload.', refused[1]), true);
+    if (e.message === 'WEB_ONLY') showMsg(t('The web version shows crypto only (for example BTC-USD). Stocks, indices, FX and futures need the desktop app.'), 'download');
+    else if (refused) showMsg(t('Yahoo Finance refused the request from this network (HTTP {0}). Try switching your VPN or proxy on or off, or wait a few minutes and reload.', refused[1]), true);
     else if (unreachable) showMsg(t('Could not connect to Yahoo Finance. Check your internet connection, or whether a VPN or firewall is blocking it.'), true);
     else showMsg(e.message + t(' — try another symbol or timeframe.'));
   }
@@ -459,7 +469,12 @@ delBtn.addEventListener('click', () => removeDrawings());
 toolsEl.append(delBtn);
 // version of the running app, always visible at the bottom of the toolbar
 const verEl = el('span', { id: 'ver' }); toolsEl.append(verEl);
-api('/api/version').then((v) => { verEl.textContent = 'v' + v.version; verEl.title = 'Investerview ' + v.version; }).catch(() => {});
+api('/api/version').then((v) => { verEl.textContent = 'v' + v.version; verEl.title = 'Investerview ' + v.version + (WEB ? ' (web)' : ''); }).catch(() => {});
+if (WEB) { // no local server: hide what needs one, and say so
+  $('#sideTabs').hidden = true; $('#ext').closest('label').hidden = true; $('#impWatch').hidden = true;
+  const note = $('#webNote'); note.hidden = false; note.href = window.WebData.DOWNLOAD;
+  note.textContent = t('Web version: crypto only'); note.title = t('Stocks, indices, FX, futures, IBKR positions and the saved data file need the desktop app. Click to download it. Your watchlist here is kept in this browser only.');
+}
 
 function setTool(id) {
   state.tool = id; draft = null;
@@ -854,9 +869,10 @@ const COLS = [
 ];
 let rows = [], scanErrors = [], sort = { key: 'chg', dir: -1 }, scanSeq = 0;
 const uniSel = $('#uni'), presetSel = $('#preset'), customInp = $('#uniCustom');
+if (WEB) for (const k of Object.keys(UNIVERSES)) if (UNIVERSES[k] && k !== 'Crypto') delete UNIVERSES[k]; // the rest need the desktop app
 for (const k of Object.keys(UNIVERSES)) uniSel.append(el('option', { textContent: t(k), value: k }));
 for (const k of Object.keys(PRESETS)) presetSel.append(el('option', { textContent: t(k), value: k }));
-uniSel.value = store.get('universe', 'US large caps'); if (!uniSel.value) uniSel.selectedIndex = 0;
+uniSel.value = store.get('universe', WEB ? 'Crypto' : 'US large caps'); if (!uniSel.value) uniSel.selectedIndex = 0;
 customInp.value = store.get('custom', '');
 const fInputs = [...document.querySelectorAll('#filters [data-f]')];
 
