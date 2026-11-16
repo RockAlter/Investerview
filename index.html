@@ -34,7 +34,10 @@
     <option value="columns" data-i18n>Columns</option>
     <option value="renko" data-i18n>Renko</option>
   </select>
-  <button id="cmpBtn" title="Add another symbol to the chart as a line, to compare how the two have moved." data-i18n-title data-i18n>Compare</button>
+  <div class="menu">
+    <button id="cmpBtn" title="Add another symbol to the chart as a line, to compare how the two have moved." data-i18n-title data-i18n>Compare</button>
+    <div id="cmpBox" hidden></div>
+  </div>
   <div class="menu">
     <button id="indBtn" data-i18n>Indicators ▾</button>
     <ul id="indMenu" hidden></ul>
@@ -44,6 +47,12 @@
     <option value="1" data-i18n>Log scale</option>
     <option value="2" data-i18n>Percent scale</option>
     <option value="3" data-i18n>Indexed to 100</option>
+  </select>
+  <select id="layout" title="Chart layout: show 1, 2 or 4 charts at once" data-i18n-title>
+    <option value="1" data-i18n>1 chart</option>
+    <option value="2h" data-i18n>2 charts, side by side</option>
+    <option value="2v" data-i18n>2 charts, stacked</option>
+    <option value="4" data-i18n>4 charts</option>
   </select>
   <label class="chk" title="Show pre-market and after-hours trading on the 1m–1h charts (shaded) and in the watchlist. Stocks and ETFs only." data-i18n-title><input type="checkbox" id="ext"> <span data-i18n>Ext. hours</span></label>
   <button id="refresh" title="Refresh prices now. They also update by themselves: the chart every 30 seconds, the watchlist every minute." data-i18n-title>⟳</button>
@@ -66,6 +75,7 @@
 
 <main id="chartView">
   <aside id="tools"></aside>
+  <div id="multi" data-layout="1">
   <section id="stage">
     <div id="chart"></div>
     <canvas id="draw"></canvas>
@@ -76,12 +86,15 @@
     <div id="hint" hidden></div>
     <div id="msg" hidden></div>
   </section>
+  </div>
   <aside id="watch">
     <nav id="sideTabs" class="seg">
       <button data-side="watch" class="on" data-i18n>Watchlist</button>
       <button data-side="pos" title="Your Interactive Brokers positions (read-only)" data-i18n-title><span>IBKR</span><i id="ibDot" hidden></i></button>
       <button data-side="paper" title="Practice account with virtual money" data-i18n-title data-i18n>Paper</button>
+      <button data-side="alerts" title="Be told when a price is reached" data-i18n-title data-i18n>Alerts</button>
     </nav>
+    <div id="sideAlerts" hidden></div>
     <div id="sidePos" hidden></div>
     <div id="sidePaper" hidden></div>
     <div id="sideWatch">
