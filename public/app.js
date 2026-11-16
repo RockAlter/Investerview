@@ -11,24 +11,32 @@ const el = (tag, props = {}, ...kids) => {
   for (const k of kids) if (k != null) e.append(k);
   return e;
 };
+// Multi-chart layout: each extra chart is this same page in a frame, opened with ?pane=1..3 (EMBED). It keeps its own
+// symbol, timeframe, chart type and indicators, shares the drawings, and leaves saving to disk to the main window.
+const PANE = Math.min(3, Math.max(0, Math.round(+new URLSearchParams(location.search).get('pane') || 0)));
+const EMBED = PANE > 0 && window.parent !== window;
+if (EMBED) document.documentElement.classList.add('embed');
+const OWN = new Set(['symbol', 'tf', 'type', 'scale', 'compare', 'indicators']);
+const skey = (k) => 'cd.' + (EMBED && OWN.has(k) ? 'p' + PANE + '.' : '') + k;
 const store = {
-  get(k, d) { try { const v = localStorage.getItem('cd.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem('cd.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } if (SYNCED.has(k)) pushState(); },
+  get(k, d) { try { const v = localStorage.getItem(skey(k)); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  shared(k, d) { try { const v = localStorage.getItem('cd.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(skey(k), JSON.stringify(v)); } catch { /* storage unavailable */ } if (SYNCED.has(k)) pushState(); },
 };
 // The watchlist, drawings and indicators are also mirrored to a file on disk through the local
 // server, so they survive a cleared browser and the MCP server can read them. The file wins on start-up.
-const SYNCED = new Set(['watch', 'drawings', 'collapsed', 'indicators', 'paper']);
+const SYNCED = new Set(['watch', 'drawings', 'collapsed', 'indicators', 'paper', 'alerts']);
 let syncReady = false, pushTimer = 0;
 // Web version (opened from a website such as GitHub Pages, not from the desktop app): there is no
 // local server, so web-data.js fetches prices in the browser, through the data proxy (worker/) and
 // the other sources it switches between. IBKR positions and the saved data file need the desktop app.
 const WEB = !!window.WebData && (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || new URLSearchParams(location.search).has('web'));
 function pushState() {
-  if (!syncReady || WEB) return;
+  if (!syncReady || WEB || EMBED) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ watch: state.watch, drawings: state.drawings, collapsed: [...collapsed], indicators: state.indicators, paper: state.paper }) }).catch(() => {});
+      body: JSON.stringify({ watch: state.watch, drawings: state.drawings, collapsed: [...collapsed], indicators: state.indicators, paper: state.paper, alerts: state.alerts }) }).catch(() => {});
   }, 400);
 }
 async function pullState() {
@@ -39,6 +47,7 @@ async function pullState() {
       if (Array.isArray(s.indicators)) state.indicators = s.indicators;
       collapsed.clear(); for (const c of s.collapsed || []) collapsed.add(c);
       if (s.paper && typeof s.paper.cash === 'number') { state.paper = s.paper; store.set('paper', state.paper); }
+      if (Array.isArray(s.alerts)) { state.alerts = s.alerts; store.set('alerts', state.alerts); }
       store.set('watch', state.watch); store.set('drawings', state.drawings); store.set('indicators', state.indicators); store.set('collapsed', [...collapsed]);
       syncReady = true;
     } else { syncReady = true; pushState(); } // no file yet: create it from this browser's data
@@ -93,7 +102,7 @@ const IND = {
 const DEFAULT_WATCH = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD', 'EURUSD=X', 'GC=F'];
 
 const state = {
-  symbol: store.get('symbol', 'AAPL'),
+  symbol: store.get('symbol', EMBED ? ['MSFT', 'NVDA', 'TSLA'][PANE - 1] : 'AAPL'),
   tf: store.get('tf', '1D'),
   type: store.get('type', 'candles'),
   scale: store.get('scale', store.get('log', false) ? 1 : 0), // price scale: 0 regular, 1 log, 2 percent, 3 indexed to 100
@@ -101,7 +110,8 @@ const state = {
   raw: [], // bars as loaded; state.data is what the chart shows (Renko bricks in the Renko chart)
   ext: store.get('ext', false),
   extRuns: [],
-  indicators: store.get('indicators', [{ id: 1, type: 'SMA', period: 50 }, { id: 2, type: 'SMA', period: 200 }, { id: 3, type: 'VOL' }]),
+  indicators: store.get('indicators', store.shared('indicators', [{ id: 1, type: 'SMA', period: 50 }, { id: 2, type: 'SMA', period: 200 }, { id: 3, type: 'VOL' }])),
+  alerts: store.get('alerts', []), // price alerts: { id, sym, op: 'above' | 'below', price, time, hit, hitPrice }
   watch: store.get('watch', DEFAULT_WATCH),
   drawings: store.get('drawings', {}),
   paper: store.get('paper', null) || { start: 100000, cash: 100000, realized: 0, pos: {}, orders: [], trades: [] }, // practice account
@@ -459,7 +469,7 @@ function buildChart(keepRange) {
   onView(true, view.from);
   renderChips();
   updateLegend(n - 1);
-  drawIbLines(); if (ib) renderIb(); renderPaper();
+  drawIbLines(); if (ib) renderIb(); renderPaper(); renderAlerts();
 }
 
 function applyData() {
@@ -653,7 +663,12 @@ async function load({ refresh = false, fresh = false } = {}) {
   }
 }
 
-function setSymbol(sym) {
+// main = always the main chart (its own search box, the Paper and Alerts tabs); otherwise the chart that was clicked last
+function setSymbol(sym, main) {
+  if (!EMBED && !main && activePane > 0 && frames[activePane - 1]) {
+    frames[activePane - 1].contentWindow.postMessage({ cd: 'symbol', sym: sym.toUpperCase() }, location.origin);
+    setView('chart'); return;
+  }
   state.symbol = sym.toUpperCase(); store.set('symbol', state.symbol);
   selected = null; draft = null;
   $('#sym').value = '';
@@ -682,10 +697,12 @@ $('#type').addEventListener('change', (e) => {
 });
 $('#scale').value = String(state.scale);
 $('#scale').addEventListener('change', (e) => setScale(Number(e.target.value)));
-$('#cmpBtn').addEventListener('click', () => {
-  const v = prompt(t('Symbol to compare with {0} (for example SPY, QQQ, BTC-USD, 7203.T):', state.symbol));
-  if (v) addCompare(v);
-});
+const cmpBox = $('#cmpBox'); // Compare: a search box under the button
+cmpBox.append(symbolSearch((sym) => { cmpBox.hidden = true; addCompare(sym); }));
+$('#cmpBtn').addEventListener('click', (e) => { e.stopPropagation(); indMenu.hidden = true; cmpBox.hidden = !cmpBox.hidden; if (!cmpBox.hidden) cmpBox.querySelector('input').focus(); });
+cmpBox.addEventListener('click', (e) => e.stopPropagation());
+cmpBox.addEventListener('keydown', (e) => { if (e.key === 'Escape') cmpBox.hidden = true; });
+document.addEventListener('click', () => { cmpBox.hidden = true; });
 // light / dark theme: follows the system setting until the user picks one with the button
 let theme = store.get('theme', null);
 const sysLight = window.matchMedia('(prefers-color-scheme: light)');
@@ -696,7 +713,10 @@ function applyTheme(redraw) {
   $('#theme').textContent = th === 'dark' ? '☀' : '☾';
   if (redraw) { if (chart && state.data.length) buildChart(true); renderGrid(); }
 }
-$('#theme').addEventListener('click', () => { theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'; store.set('theme', theme); applyTheme(true); });
+$('#theme').addEventListener('click', () => {
+  theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'; store.set('theme', theme); applyTheme(true);
+  for (const f of frames) { try { f.contentWindow.location.reload(); } catch { /* frame not ready */ } } // the other charts pick the theme up on load
+});
 sysLight.addEventListener('change', () => { if (!theme) applyTheme(true); });
 applyTheme(false);
 $('#ext').checked = state.ext;
@@ -737,7 +757,7 @@ function renderHits() {
   });
   results.hidden = !hits.length;
 }
-function pick(sym) { hits = []; renderHits(); symInput.blur(); setSymbol(sym); }
+function pick(sym) { hits = []; renderHits(); symInput.blur(); setSymbol(sym, true); }
 symInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
   const q = symInput.value.trim(); hitI = -1;
@@ -758,6 +778,43 @@ symInput.addEventListener('keydown', (e) => {
   } else if (e.key === 'Escape') { hits = []; renderHits(); symInput.blur(); }
 });
 symInput.addEventListener('blur', () => { results.hidden = true; });
+// the same search for a box inside a side tab (Paper, Alerts)
+function symbolSearch(onPick) {
+  const input = el('input', { placeholder: t('Search symbol or company…'), autocomplete: 'off', spellcheck: false }), listEl = el('ul', { className: 'hits', hidden: true });
+  let timer = 0, seq = 0, found = [], at = -1;
+  const draw = () => {
+    listEl.textContent = '';
+    found.forEach((h, i) => {
+      const li = el('li', { className: i === at ? 'on' : '' }, el('b', { textContent: h.symbol }), el('span', { className: 'n', textContent: h.name }));
+      li.addEventListener('mousedown', (e) => { e.preventDefault(); choose(h.symbol); });
+      listEl.append(li);
+    });
+    listEl.hidden = !found.length;
+  };
+  const choose = (sym) => { found = []; at = -1; draw(); input.value = ''; input.blur(); onPick(sym); };
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim(); at = -1;
+    if (!q) { found = []; draw(); return; }
+    timer = setTimeout(async () => {
+      const mine = ++seq;
+      try { const r = await api('/api/search?q=' + encodeURIComponent(q)); if (mine === seq) { found = r; draw(); } } catch { /* keep previous results */ }
+    }, 180);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!found.length) return;
+      e.preventDefault(); at = (at + (e.key === 'ArrowDown' ? 1 : -1) + found.length) % found.length; draw();
+    } else if (e.key === 'Enter') {
+      const q = input.value.trim().toUpperCase(); if (!q) return;
+      const exact = found.find((h) => h.symbol.toUpperCase() === q);
+      choose(at >= 0 ? found[at].symbol : exact ? exact.symbol : /^[A-Z0-9.\-=^]{1,20}$/.test(q) && !found.length ? q : found[0] ? found[0].symbol : q);
+    } else if (e.key === 'Escape') { found = []; draw(); input.blur(); }
+  });
+  input.addEventListener('blur', () => { listEl.hidden = true; });
+  input.addEventListener('focus', () => { listEl.hidden = !found.length; });
+  return el('div', { className: 'psearch' }, input, listEl);
+}
 symInput.addEventListener('focus', () => { results.hidden = !hits.length; });
 document.addEventListener('click', () => { indMenu.hidden = true; });
 
@@ -859,7 +916,15 @@ function setTool(id) {
   const h = $('#hint'); h.hidden = id === 'cursor'; h.textContent = HINTS[id] ? t(HINTS[id]) : '';
 }
 const list = () => (state.drawings[state.symbol] ||= []);
-const saveDrawings = () => store.set('drawings', state.drawings);
+function saveDrawings() {
+  const all = store.get('drawings', {}), mine = state.drawings[state.symbol];
+  if (mine && mine.length) all[state.symbol] = mine; else delete all[state.symbol];
+  state.drawings = all; store.set('drawings', all);
+}
+window.addEventListener('storage', (e) => { // another chart of the layout changed something
+  if (e.key === 'cd.drawings') { state.drawings = store.get('drawings', {}); selected = null; if (!EMBED) pushState(); }
+  else if (EMBED && (e.key === 'cd.paper' || e.key === 'cd.alerts')) { state.paper = store.get('paper', state.paper); state.alerts = store.get('alerts', []); drawIbLines(); }
+});
 function removeDrawings() {
   if (selected) { state.drawings[state.symbol] = list().filter((d) => d !== selected); selected = null; }
   else if (list().length && confirm(t('Remove all {0} drawings on {1}?', list().length, state.symbol))) state.drawings[state.symbol] = [];
@@ -944,28 +1009,63 @@ function distSeg(px, py, x1, y1, x2, y2) {
   const k = len ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len)) : 0;
   return Math.hypot(px - x1 - k * dx, py - y1 - k * dy);
 }
+const hitsDrawing = (d, x, y) => (hitMap.get(d) || []).some((s) => (s.length ? distSeg(x, y, s[0], s[1], s[2], s[3]) < 6 : x >= s.x1 - 4 && x <= s.x2 + 4 && y >= s.y1 - 4 && y <= s.y2 + 4));
 function selectAt(x, y) {
-  if (dragH) return;
+  if (dragH || dragA) return;
   selected = null;
-  for (const d of [...list()].reverse()) {
-    const hit = (hitMap.get(d) || []).some((s) => (s.length ? distSeg(x, y, s[0], s[1], s[2], s[3]) < 6 : x >= s.x1 - 4 && x <= s.x2 + 4 && y >= s.y1 - 4 && y <= s.y2 + 4));
-    if (hit) { selected = d; break; }
-  }
+  for (const d of [...list()].reverse()) if (hitsDrawing(d, x, y)) { selected = d; break; }
 }
 // drag a handle of the selected drawing to move that point
 stage.addEventListener('pointerdown', (e) => {
   if (state.tool !== 'cursor' || !selected || e.button !== 0) return;
   const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
-  const h = selHandles.find((q) => Math.hypot(q.x - x, q.y - y) < 8); if (!h) return;
-  e.stopPropagation(); e.preventDefault(); dragH = { d: selected, k: h.k };
+  const h = selHandles.find((q) => Math.hypot(q.x - x, q.y - y) < 8);
+  if (h) dragH = { d: selected, k: h.k };
+  else if (hitsDrawing(selected, x, y)) { // grabbed by its body: move the whole drawing
+    const g = geom(); if (!g) return;
+    const from = {}; for (const k of KEYS) if (selected[k]) { const q = toXY(selected[k], g); if (!q) return; from[k] = q; }
+    dragH = { d: selected, from, x, y };
+  } else return;
+  e.stopPropagation(); e.preventDefault(); stage.classList.add('grab');
 }, true);
-stage.addEventListener('mousedown', (e) => { if (dragH) e.stopPropagation(); }, true); // keep the chart from panning meanwhile
+// drag an alert's line up or down to change its price (main chart only)
+let dragA = null;
+stage.addEventListener('pointerdown', (e) => {
+  if (EMBED || dragH || state.tool !== 'cursor' || e.button !== 0 || !S.main) return;
+  const r = cv.getBoundingClientRect(), y = e.clientY - r.top, g = geom();
+  if (!g || e.clientX - r.left > g.w || y > g.h) return;
+  const a = state.alerts.find((q) => { if (q.hit || q.sym !== state.symbol) return false; const ly = S.main.priceToCoordinate(q.price); return ly != null && Math.abs(ly - y) < 5; });
+  if (!a) return;
+  e.stopPropagation(); e.preventDefault(); dragA = a; stage.classList.add('grab');
+}, true);
+stage.addEventListener('mousedown', (e) => { if (dragH || dragA) e.stopPropagation(); }, true); // keep the chart from panning meanwhile
 window.addEventListener('pointermove', (e) => {
+  if (dragA) {
+    const price = S.main.coordinateToPrice(e.clientY - cv.getBoundingClientRect().top);
+    if (price > 0) { dragA.price = +price.toFixed(precision()); drawIbLines(); }
+    return;
+  }
   if (!dragH) return;
+  if (dragH.from) { // whole drawing: every point shifts by the same distance on screen
+    const r = cv.getBoundingClientRect(), g = geom(); if (!g) return;
+    const dx = e.clientX - r.left - dragH.x, dy = e.clientY - r.top - dragH.y, next = {};
+    for (const k of Object.keys(dragH.from)) { const p = fromXY(dragH.from[k].x + dx, dragH.from[k].y + dy, g); if (!p) return; next[k] = p; }
+    Object.assign(dragH.d, next);
+    return;
+  }
   const p = evPoint(e); if (!p) return;
   dragH.d[dragH.k] = p; if (NPTS[dragH.d.type] === 1) dragH.d.b = p;
 });
-window.addEventListener('pointerup', () => { if (dragH) { saveDrawings(); setTimeout(() => { dragH = null; }, 0); } });
+window.addEventListener('pointerup', () => {
+  stage.classList.remove('grab');
+  if (dragH) { saveDrawings(); setTimeout(() => { dragH = null; }, 0); }
+  if (dragA) {
+    const px = paperPrice(dragA.sym);
+    if (px != null && dragA.price !== px) dragA.op = dragA.price > px ? 'above' : 'below'; // the side it now waits on
+    saveAlerts(); drawIbLines(); renderAlerts();
+    setTimeout(() => { dragA = null; }, 0);
+  }
+});
 
 function label(text, x, y, color, align = 'left') {
   ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = align; ctx.textBaseline = 'middle';
@@ -1361,12 +1461,14 @@ function drawIbLines() {
   const pp = state.paper.pos[state.symbol]; // the practice account's lines
   if (pp) add(pp.avg, C.cost, `${t('Paper')} · ${t('Avg cost')} · ${fmtQty(pp.qty)}`);
   for (const o of state.paper.orders) if (o.sym === state.symbol) add(o.price, o.side === 'BUY' ? C.up : C.down, `${t('Paper')} · ${t(o.side === 'BUY' ? 'Buy' : 'Sell')} ${fmtQty(o.qty)} ${t(ORDER_TYPES[o.type])}`);
+  for (const a of state.alerts) if (!a.hit && a.sym === state.symbol) add(a.price, ALERT_COLOR, '🔔 ' + t('Alert'));
 }
 for (const b of $('#sideTabs').children) {
   b.addEventListener('click', () => {
     side = b.dataset.side;
     for (const x of $('#sideTabs').children) x.classList.toggle('on', x === b);
-    $('#sideWatch').hidden = side !== 'watch'; $('#sidePos').hidden = side !== 'pos'; $('#sidePaper').hidden = side !== 'paper';
+    $('#sideWatch').hidden = side !== 'watch'; $('#sidePos').hidden = side !== 'pos'; $('#sidePaper').hidden = side !== 'paper'; $('#sideAlerts').hidden = side !== 'alerts';
+    if (side === 'alerts') { renderAlerts(); paperTick(); }
     if (side === 'pos' && (!ib || ib.state !== 'ok')) { renderIb(); refreshIb(); }
     if (side === 'paper') { renderPaper(); paperTick(); }
   });
@@ -1413,7 +1515,7 @@ let paperBusy = false, paperNote = '';
 async function paperTick() { // refresh prices, then fill limit and stop orders whose price was reached
   if (paperBusy) return; paperBusy = true;
   try {
-    const P = state.paper, syms = [...new Set([...Object.keys(P.pos), ...P.orders.map((o) => o.sym)])].filter((s) => s !== state.symbol);
+    const P = state.paper, syms = [...new Set([...Object.keys(P.pos), ...P.orders.map((o) => o.sym), ...state.alerts.filter((a) => !a.hit).map((a) => a.sym)])].filter((s) => s !== state.symbol);
     if (syms.length) {
       try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',')); for (const r of j.rows) if (r.last != null) paperQ.set(r.symbol, r.last); } catch { /* keep the last known prices */ }
     }
@@ -1428,7 +1530,9 @@ async function paperTick() { // refresh prices, then fill limit and stop orders 
       else { paperFill(o.sym, o.side, o.qty, px, o.type); paperNote = t('Filled: {0} {1} {2} at {3}', t(o.side === 'BUY' ? 'Buy' : 'Sell'), fmtQty(o.qty), o.sym, fmtLast(px)); }
     }
     if (changed) { savePaper(); drawIbLines(); }
+    checkAlerts();
     if (side === 'paper') renderPaper();
+    if (side === 'alerts') renderAlerts();
   } finally { paperBusy = false; }
 }
 function paperOrder(sym, sideName, qty, type, limit) {
@@ -1472,7 +1576,8 @@ function buildPaper() { // the fixed part of the tab: summary, order ticket and 
     el('div', { className: 'ibhead' }, el('span', { textContent: t('Practice account') }), el('span', { className: 'badge paper', textContent: t('PAPER') }), el('span', { className: 'grow' }), reset),
     ui.sum,
     el('h4', { textContent: t('Order') }),
-    el('div', { className: 'ticket' }, el('div', { className: 'trow' }, ui.sym, ui.last),
+    el('div', { className: 'ticket' }, symbolSearch((sym) => { paperNote = ''; setSymbol(sym, true); renderPaper(); }),
+      el('div', { className: 'trow head' }, ui.sym, ui.last),
       el('div', { className: 'trow' }, el('label', {}, el('span', { textContent: t('Quantity') }), ui.qty)),
       el('div', { className: 'trow' }, ui.type, ui.price),
       el('div', { className: 'trow' }, ui.buy, ui.sell), ui.note),
@@ -1644,6 +1749,140 @@ presetSel.addEventListener('change', () => {
 for (const i of fInputs) i.addEventListener('input', renderGrid);
 $('#resetF').addEventListener('click', () => { presetSel.selectedIndex = 0; presetSel.dispatchEvent(new Event('change')); });
 
+// ---------------------------------------------------------------- price alerts
+// Checked in the page by the 20-second tick (paperTick), so only while the app is open.
+const ALERT_COLOR = '#f5a524';
+const saveAlerts = () => store.set('alerts', state.alerts);
+const nowSec = () => Math.floor(Date.now() / 1000);
+function toast(title, body, onClick) {
+  let box = $('#toasts'); if (!box) { box = el('div', { id: 'toasts' }); document.body.append(box); }
+  const n = el('div', { className: 'toast' }, el('b', { textContent: title }), el('span', { textContent: body }));
+  n.addEventListener('click', () => { n.remove(); if (onClick) onClick(); });
+  box.append(n); setTimeout(() => n.remove(), onClick ? 120000 : 5000);
+}
+function beep() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    for (const at of [0, 0.25]) { const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(ac.destination); o.start(ac.currentTime + at); o.stop(ac.currentTime + at + 0.15); }
+    setTimeout(() => ac.close().catch(() => {}), 1500);
+  } catch { /* no sound */ }
+}
+const canNotify = () => 'Notification' in window;
+function addAlert(sym, price) { // returns an error text, or null when the alert was added
+  const px = paperPrice(sym);
+  if (!(price > 0)) return t('Enter the alert price.');
+  if (px == null) return t('No price for {0} yet.', sym);
+  if (price === px) return t('The price is already there.');
+  if (state.alerts.filter((a) => !a.hit).length >= 100) return t('Too many alerts.');
+  state.alerts.push({ id: Date.now(), sym, op: price > px ? 'above' : 'below', price, time: nowSec(), hit: 0, hitPrice: 0 });
+  saveAlerts(); drawIbLines(); renderAlerts();
+  if (canNotify() && Notification.permission === 'default') { try { Notification.requestPermission().then(renderAlerts, () => {}); } catch { /* older browsers */ } }
+  return null;
+}
+function checkAlerts() {
+  let changed = false;
+  for (const a of state.alerts) {
+    if (a.hit) continue;
+    const px = paperPrice(a.sym); if (px == null) continue;
+    if (a.op === 'above' ? px < a.price : px > a.price) continue;
+    a.hit = nowSec(); a.hitPrice = px; changed = true;
+    const body = t(a.op === 'above' ? '{0} rose to {1} (alert at {2})' : '{0} fell to {1} (alert at {2})', a.sym, fmtLast(px), fmtLast(a.price));
+    toast(t('Price alert'), body, () => setSymbol(a.sym, true)); beep();
+    try { if (canNotify() && Notification.permission === 'granted') new Notification('Investerview – ' + t('Price alert'), { body }); } catch { /* the in-app message is enough */ }
+  }
+  if (!changed) return;
+  const done = state.alerts.filter((a) => a.hit);
+  if (done.length > 50) { const drop = new Set(done.slice(0, done.length - 50)); state.alerts = state.alerts.filter((a) => !drop.has(a)); }
+  saveAlerts(); drawIbLines();
+}
+let alertUI = null, alertNote = '';
+function buildAlerts() {
+  const box = $('#sideAlerts');
+  const ui = { sym: el('b'), last: el('span'), price: el('input', { type: 'number', min: '0', step: 'any', placeholder: t('Alert price') }), add: el('button', { className: 'primary', textContent: t('Add alert') }),
+    note: el('p', { className: 'pnote' }), perm: el('button', { textContent: t('Turn on notifications'), title: t('Also show a Windows notification when an alert triggers') }),
+    wait: el('div'), done: el('div'), clear: el('button', { className: 'mini', textContent: t('Clear') }) };
+  const go = () => { const err = addAlert(state.symbol, +ui.price.value); alertNote = err || ''; if (!err) ui.price.value = ''; renderAlerts(); };
+  ui.add.addEventListener('click', go);
+  ui.price.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  ui.perm.addEventListener('click', () => { try { Notification.requestPermission().then(renderAlerts, () => {}); } catch { /* older browsers */ } });
+  ui.clear.addEventListener('click', () => { state.alerts = state.alerts.filter((a) => !a.hit); saveAlerts(); renderAlerts(); });
+  box.append(
+    el('div', { className: 'ibhead' }, el('span', { textContent: t('Price alerts') }), el('span', { className: 'grow' }), ui.perm),
+    el('h4', { textContent: t('New alert') }),
+    el('div', { className: 'ticket' }, symbolSearch((sym) => { alertNote = ''; setSymbol(sym, true); renderAlerts(); }),
+      el('div', { className: 'trow head' }, ui.sym, ui.last), el('div', { className: 'trow' }, ui.price, ui.add), ui.note),
+    el('h4', { textContent: t('Waiting') }), ui.wait, el('h4', {}, t('Triggered'), ui.clear), ui.done,
+    el('p', { className: 'pfoot', textContent: t('Alerts are checked about every 20 seconds, and only while this app is open. When one triggers you get a message here, a sound and, if turned on, a Windows notification. You can also right-click the chart to add an alert at that price.') }));
+  return ui;
+}
+function renderAlerts() {
+  if (side !== 'alerts') return;
+  const ui = (alertUI ||= buildAlerts()), px = paperPrice(state.symbol);
+  ui.sym.textContent = state.symbol; ui.last.textContent = px == null ? '–' : fmtLast(px);
+  ui.note.textContent = alertNote; ui.note.hidden = !alertNote;
+  ui.perm.hidden = !(canNotify() && Notification.permission === 'default');
+  const drop = (a) => { const b = el('button', { className: 'mini', textContent: '✕', title: t('Remove') }); b.addEventListener('click', (e) => { e.stopPropagation(); state.alerts = state.alerts.filter((x) => x !== a); saveAlerts(); drawIbLines(); renderAlerts(); }); return b; };
+  const wait = state.alerts.filter((a) => !a.hit), done = state.alerts.filter((a) => a.hit).reverse();
+  ui.wait.textContent = '';
+  if (!wait.length) ui.wait.append(el('p', { textContent: t('No alerts waiting.') }));
+  for (const a of wait) {
+    const last = paperPrice(a.sym), away = last == null ? null : (a.price / last - 1) * 100;
+    const r = el('div', { className: 'ibrow link' + (a.sym === state.symbol ? ' on' : '') },
+      el('div', {}, el('b', { textContent: a.sym }), el('small', { textContent: t(a.op === 'above' ? '▲ rises to' : '▼ falls to') })),
+      el('div', { className: 'r' }, el('span', { textContent: fmtLast(a.price) }), drop(a), el('small', { textContent: away == null ? '' : t('{0} away', fmtPct(away)) })));
+    r.addEventListener('click', () => setSymbol(a.sym, true));
+    ui.wait.append(r);
+  }
+  ui.done.textContent = ''; ui.clear.hidden = !done.length;
+  if (!done.length) ui.done.append(el('p', { textContent: t('Nothing triggered yet.') }));
+  for (const a of done) {
+    const when = new Date(a.hit * 1000);
+    const r = el('div', { className: 'ibrow link' },
+      el('div', {}, el('b', { textContent: a.sym }), el('small', { textContent: `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` })),
+      el('div', { className: 'r' }, el('span', { className: a.op === 'above' ? 'up' : 'down', textContent: (a.op === 'above' ? '▲ ' : '▼ ') + fmtLast(a.price) }), drop(a), el('small', { textContent: t('at {0}', fmtLast(a.hitPrice)) })));
+    r.addEventListener('click', () => setSymbol(a.sym, true));
+    ui.done.append(r);
+  }
+}
+// right-click the chart: add an alert at that price
+const ctxMenu = el('ul', { id: 'ctx', hidden: true }); document.body.append(ctxMenu);
+if (!EMBED) stage.addEventListener('contextmenu', (e) => {
+  if (!S.main || state.tool !== 'cursor') return;
+  const price = S.main.coordinateToPrice(e.clientY - chartEl.getBoundingClientRect().top);
+  if (!(price > 0)) return;
+  e.preventDefault();
+  const p = +price.toFixed(precision());
+  const li = el('li', { textContent: '🔔 ' + t('Add alert at {0}', fmtP(p)) });
+  li.addEventListener('click', () => { const err = addAlert(state.symbol, p); toast(t('Price alert'), err || t('Alert added: {0} at {1}', state.symbol, fmtP(p))); });
+  ctxMenu.textContent = ''; ctxMenu.append(li);
+  ctxMenu.style.left = Math.min(e.clientX, innerWidth - 220) + 'px'; ctxMenu.style.top = Math.min(e.clientY, innerHeight - 50) + 'px'; ctxMenu.hidden = false;
+});
+document.addEventListener('click', () => { ctxMenu.hidden = true; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ctxMenu.hidden = true; });
+
+// ---------------------------------------------------------------- multi-chart layout
+const multi = $('#multi'), LAYOUTS = { 1: 1, '2h': 2, '2v': 2, 4: 4 }, frames = [];
+let layout = String(store.get('layout', '1')), activePane = 0; // activePane: 0 = the main chart, 1-3 = a frame; watchlist clicks go there
+function setActive(i) { activePane = i; [...multi.children].forEach((c, k) => c.classList.toggle('active', k === i)); }
+function applyLayout() {
+  if (!LAYOUTS[layout] || EMBED) layout = '1';
+  const n = LAYOUTS[layout];
+  multi.dataset.layout = layout; $('#layout').value = layout;
+  while (frames.length > n - 1) frames.pop().parentNode.remove();
+  while (frames.length < n - 1) {
+    const f = el('iframe', { src: location.pathname + '?pane=' + (frames.length + 1) + (new URLSearchParams(location.search).has('web') ? '&web' : ''), title: t('Chart') + ' ' + (frames.length + 2) });
+    frames.push(f); multi.append(el('div', { className: 'pane' }, f));
+  }
+  setActive(activePane > n - 1 ? 0 : activePane);
+}
+$('#layout').addEventListener('change', (e) => { layout = e.target.value; store.set('layout', layout); applyLayout(); });
+stage.addEventListener('pointerdown', () => setActive(0), true);
+$('#top').addEventListener('pointerdown', () => setActive(0), true);
+window.addEventListener('blur', () => setTimeout(() => { const i = frames.indexOf(document.activeElement); if (i >= 0) setActive(i + 1); }, 0)); // focus moved into a frame
+if (EMBED) window.addEventListener('message', (e) => { // the main window sends the symbol picked in its watchlist
+  if (e.origin === location.origin && e.source === window.parent && e.data && e.data.cd === 'symbol' && typeof e.data.sym === 'string') setSymbol(e.data.sym);
+});
+
 // ---------------------------------------------------------------- views + boot
 function setView(v) {
   if (state.view === v) return;
@@ -1655,11 +1894,14 @@ function setView(v) {
 for (const b of $('#views').children) b.addEventListener('click', () => setView(b.dataset.view));
 
 if (!LW) showMsg(t('Could not load the charting library (needs an internet connection). Reload to retry.'));
-else pullState().then(() => {
+else (EMBED ? Promise.resolve() : pullState()).then(() => {
   setTool('cursor'); renderWatch(); renderGrid();
-  load(); refreshWatch(); refreshIb(); requestAnimationFrame(frame);
+  load(); requestAnimationFrame(frame);
   setInterval(() => { if (!document.hidden && state.view === 'chart') load({ refresh: true }); }, 30000);
+  if (EMBED) return; // an extra chart of the layout: the main window does the rest
+  applyLayout(); refreshWatch(); refreshIb();
   setInterval(() => { if (!document.hidden) refreshWatch(); }, 60000);
-  paperTick(); setInterval(() => { if (state.paper.orders.length || (side === 'paper' && !document.hidden)) paperTick(); }, 20000); // working orders are checked even in a background tab
+  // working orders and waiting alerts are checked even in a background tab
+  paperTick(); setInterval(() => { if (state.paper.orders.length || state.alerts.some((a) => !a.hit) || ((side === 'paper' || side === 'alerts') && !document.hidden)) paperTick(); }, 20000);
 });
 })();

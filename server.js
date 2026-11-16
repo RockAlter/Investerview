@@ -443,6 +443,9 @@ function cleanState(s) {
     .map((i) => (isNum(i.period) ? { id: i.id, type: i.type, period: i.period } : { id: i.id, type: i.type }));
   const out = { watch: str(s.watch, 200), collapsed: str(s.collapsed, 100), drawings, indicators, updated: Date.now() };
   const paper = cleanPaper(s.paper); if (paper) out.paper = paper;
+  // price alerts: waiting ones, and the last ones that triggered (hit = when, hitPrice = at what price)
+  out.alerts = (Array.isArray(s.alerts) ? s.alerts : []).filter((a) => a && SYMBOL_RE.test(a.sym) && (a.op === 'above' || a.op === 'below') && isNum(a.price) && a.price > 0).slice(-150)
+    .map((a) => ({ id: isNum(a.id) ? a.id : 0, sym: a.sym, op: a.op, price: a.price, time: isNum(a.time) ? a.time : 0, hit: isNum(a.hit) ? a.hit : 0, hitPrice: isNum(a.hitPrice) ? a.hitPrice : 0 }));
   return out;
 }
 function readBody(req, max) {
@@ -563,7 +566,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.8.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '1.9.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',
@@ -738,6 +741,19 @@ const MCP_TOOLS = [
       const all = s.drawings || {};
       const pick = a.symbol ? { [needSymbol(a.symbol)]: all[needSymbol(a.symbol)] || [] } : all;
       return Object.entries(pick).map(([symbol, list]) => ({ symbol, drawings: list.map(describeDrawing) }));
+    },
+  },
+  {
+    name: 'get_alerts',
+    description: 'Price alerts the user set in the Investerview app: the ones still waiting (symbol, direction, price) and the ones that already triggered (with when and at what price). The app checks alerts only while it is open, so a waiting alert may already have been passed. Read-only: alerts are created in the app.',
+    inputSchema: { type: 'object', properties: { symbol: symProp } },
+    run: async (a) => {
+      const s = readState();
+      if (!s) throw new Error(NO_STATE);
+      const want = a.symbol ? needSymbol(a.symbol) : null, iso = (sec) => (sec ? new Date(sec * 1000).toISOString() : null);
+      const all = (Array.isArray(s.alerts) ? s.alerts : []).filter((x) => !want || x.sym === want);
+      const row = (x) => ({ symbol: x.sym, condition: x.op === 'above' ? 'price rises to' : 'price falls to', price: x.price, created: iso(x.time) });
+      return { waiting: all.filter((x) => !x.hit).map(row), triggered: all.filter((x) => x.hit).map((x) => ({ ...row(x), triggered: iso(x.hit), price_when_triggered: x.hitPrice })) };
     },
   },
 ];

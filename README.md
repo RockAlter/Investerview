@@ -11,6 +11,8 @@ A trading screening app: local charting and stock screening in the browser (the 
 
 - **Charts** — 13 chart types: candles, hollow candles, Heikin Ashi, bars, HLC bars, high-low, line, line with markers, step line, area, baseline, columns and Renko (brick size = 14-bar ATR); timeframes from 1 minute to 1 month; regular, log, percent and indexed-to-100 price scales.
 - **Compare** — add up to 4 other symbols to the chart as lines (for example NVDA against SPY). Each line starts at the charted symbol's price at the left edge of the screen, so the lines show which one moved more since then.
+- **Multi-chart layout** — show 1, 2 (side by side or stacked) or 4 charts at once. Each chart has its own symbol, timeframe, chart type and indicators; drawings are shared. Click a chart, then a watchlist symbol, to load it there.
+- **Price alerts** — in the **Alerts** tab, or by right-clicking the chart, set a price for a symbol. When the price gets there the app shows a message, plays a sound and (if you allow it) a Windows notification, and the alert is drawn on the chart as a line. Alerts are checked about every 20 seconds and only while the app is open.
 - **Extended hours** — optional pre-market and after-hours bars (4:00 am–8:00 pm ET) for stocks and ETFs on the 1m–1h charts, shaded, plus the latest extended-hours price in the watchlist. The overnight session is not available from this data source.
 - **Languages** — English, 简体中文, 繁體中文 and 日本語. The interface follows the browser/OS language automatically, with a selector in the top bar to override it. Translations live in `public/i18n.js`.
 - **Light and dark themes** — follows your system setting; the ☀ / ☾ button in the top bar switches and remembers your choice.
@@ -104,6 +106,7 @@ Running from source instead: `"command": "node", "args": ["C:\\path\\to\\server.
 | `run_screener` | A built-in universe, your watchlist or a custom list, filtered and sorted |
 | `get_watchlist` | Your watchlist by section, with quotes |
 | `get_drawings` | Your saved drawings: lines, price levels, channels, positions, text notes and Fibonacci levels |
+| `get_alerts` | Your price alerts: the ones still waiting and the ones that triggered |
 
 There is also a ready-made prompt, `watchlist_report`. Or just ask: "write a morning report on my Investerview watchlist".
 

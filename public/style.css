@@ -238,3 +238,50 @@ dialog textarea { width: 100%; margin: 10px 0; background: var(--bg); color: inh
 .ticket .buy:hover, .ticket .sell:hover { filter: brightness(1.1); }
 #sidePaper .pnote { margin: 0; color: var(--text); font-size: 12px; }
 #sidePaper .pfoot { margin-top: 14px; font-size: 11px; }
+
+/* multi-chart layout: the main chart plus up to three more, each a copy of the app in a frame (html.embed) */
+#multi { display: grid; min-width: 0; min-height: 0; gap: 2px; background: var(--border); }
+#multi > * { min-width: 0; min-height: 0; position: relative; background: var(--bg); }
+#multi[data-layout="2h"], #multi[data-layout="4"] { grid-template-columns: 1fr 1fr; }
+#multi[data-layout="2v"], #multi[data-layout="4"] { grid-template-rows: 1fr 1fr; }
+#multi iframe { border: 0; width: 100%; height: 100%; display: block; }
+#multi:not([data-layout="1"]) > .active::after { content: ''; position: absolute; inset: 0; border: 2px solid var(--accent); pointer-events: none; z-index: 20; }
+html.embed body { grid-template-rows: auto 1fr; }
+html.embed #top { flex-wrap: wrap; gap: 5px; padding: 4px 6px; }
+html.embed .brand, html.embed #refresh, html.embed #updated, html.embed .spacer, html.embed #webNote, html.embed #lang, html.embed #theme,
+html.embed #views, html.embed #watch, html.embed #layout, html.embed #top label.chk, html.embed #ver { display: none !important; }
+html.embed #chartView { grid-template-columns: 44px 1fr; }
+html.embed .search { flex: 0 1 130px; }
+html.embed .seg button { padding: 5px 6px; }
+
+/* symbol search inside a side tab */
+.psearch { position: relative; }
+.psearch input { width: 100%; }
+.hits { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50; margin: 0; padding: 4px; list-style: none; background: var(--panel2);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.5); max-height: 260px; overflow-y: auto; }
+:root[data-theme=light] .hits, :root[data-theme=light] #ctx, :root[data-theme=light] .toast { box-shadow: 0 10px 30px rgba(20,30,50,.18); }
+.hits li { padding: 6px 8px; border-radius: 5px; cursor: pointer; display: flex; gap: 8px; white-space: nowrap; margin: 0; }
+.hits li:hover, .hits li.on { background: var(--hover); }
+.hits li b { min-width: 64px; color: var(--text); }
+.hits li .n { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.ticket .trow.head { justify-content: space-between; }
+
+/* price alerts */
+#sideAlerts { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; font-variant-numeric: tabular-nums; }
+#sideAlerts h4 { margin: 14px 0 4px; font-size: 11px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+#sideAlerts p { margin: 0 0 8px; color: var(--muted); }
+#sideAlerts .pnote { margin: 0; color: var(--text); font-size: 12px; }
+#sideAlerts .pfoot { margin-top: 14px; font-size: 11px; }
+#sideAlerts h4 button { float: right; text-transform: none; letter-spacing: 0; }
+.ibrow .mini { margin-left: 6px; }
+#ctx { position: fixed; z-index: 100; margin: 0; padding: 4px; list-style: none; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+#ctx li { padding: 6px 12px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+#ctx li:hover { background: var(--hover); }
+#toasts { position: fixed; right: 16px; bottom: 16px; z-index: 200; display: flex; flex-direction: column; gap: 8px; max-width: 340px; }
+.toast { background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); cursor: pointer; }
+.toast b { display: block; margin-bottom: 2px; }
+
+/* Compare: search box under the button */
+#cmpBox { position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; width: 280px; padding: 6px; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+:root[data-theme=light] #cmpBox { box-shadow: 0 10px 30px rgba(20,30,50,.18); }
+#stage.grab, #stage.grab * { cursor: grabbing !important; }
