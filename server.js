@@ -421,7 +421,12 @@ function cleanState(s) {
   for (const [sym, list] of Object.entries(s.drawings && typeof s.drawings === 'object' ? s.drawings : {})) {
     if (!SYMBOL_RE.test(sym) || !Array.isArray(list)) continue;
     const ok = list.filter((d) => d && typeof d.type === 'string' && d.type.length <= 12 && isPoint(d.a) && isPoint(d.b)).slice(0, 200)
-      .map((d) => ({ type: d.type, a: { time: d.a.time, price: d.a.price }, b: { time: d.b.time, price: d.b.price } }));
+      .map((d) => {
+        const o = { type: d.type, a: { time: d.a.time, price: d.a.price }, b: { time: d.b.time, price: d.b.price } };
+        if (isPoint(d.c)) o.c = { time: d.c.time, price: d.c.price }; // third point: channels, pitchforks, triangles, positions
+        if (typeof d.text === 'string' && d.text) o.text = d.text.slice(0, 200);
+        return o;
+      });
     if (ok.length) drawings[sym] = ok;
   }
   const indicators = (Array.isArray(s.indicators) ? s.indicators : []).filter((i) => i && typeof i.type === 'string' && i.type.length <= 8).slice(0, 20)
@@ -546,7 +551,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.5.1'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '1.6.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',
@@ -582,13 +587,29 @@ async function quotes(symbols) {
   const r = await screen(symbols, true);
   return { rows: r.rows.map(quoteRow), no_data: r.errors.map((e) => e.symbol) };
 }
-const DRAWING_NAMES = { trend: 'trend_line', hline: 'horizontal_line', vline: 'vertical_line', rect: 'rectangle', fib: 'fibonacci_retracement', measure: 'measurement' };
+const DRAWING_NAMES = {
+  trend: 'trend_line', ray: 'ray', extline: 'extended_line', arrow: 'arrow', hline: 'horizontal_line', hray: 'horizontal_ray', vline: 'vertical_line', cross: 'cross_line',
+  channel: 'parallel_channel', regress: 'regression_channel', pitchfork: 'andrews_pitchfork',
+  fib: 'fibonacci_retracement', fibext: 'fibonacci_extension', fibfan: 'fibonacci_fan', fibtime: 'fibonacci_time_zones', gannfan: 'gann_fan',
+  rect: 'rectangle', ellipse: 'ellipse', triangle: 'triangle',
+  measure: 'measurement', prange: 'price_range', drange: 'date_range', position: 'position', avwap: 'anchored_vwap', text: 'text',
+};
 function describeDrawing(d) {
-  const type = DRAWING_NAMES[d.type] || d.type;
-  if (d.type === 'hline') return { type, price: num(d.a.price) };
+  const type = DRAWING_NAMES[d.type] || d.type, at = (p) => ({ time: fmtTime(p.time, true), price: num(p.price) });
+  if (d.type === 'hline' || d.type === 'hray') return { type, price: num(d.a.price) };
   if (d.type === 'vline') return { type, time: fmtTime(d.a.time, true) };
-  const o = { type, from: { time: fmtTime(d.a.time, true), price: num(d.a.price) }, to: { time: fmtTime(d.b.time, true), price: num(d.b.price) } };
-  if (d.type === 'fib') o.levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1].map((f) => ({ pct: +(f * 100).toFixed(1), price: num(d.b.price + (d.a.price - d.b.price) * f) }));
+  if (d.type === 'avwap') return { type, anchored_at: fmtTime(d.a.time, true) };
+  if (d.type === 'cross') return { type, ...at(d.a) };
+  if (d.type === 'text') return { type, text: d.text || '', ...at(d.a) };
+  if (d.type === 'position' && d.c) {
+    const gain = Math.abs(d.b.price - d.a.price), risk = Math.abs(d.c.price - d.a.price);
+    return { type, side: d.b.price >= d.a.price ? 'long' : 'short', entry: num(d.a.price), target: num(d.b.price), stop: num(d.c.price), reward_per_risk: risk ? +(gain / risk).toFixed(2) : null, from: fmtTime(d.a.time, true), to: fmtTime(d.b.time, true) };
+  }
+  const o = { type, from: at(d.a), to: at(d.b) };
+  if (d.c) o.third = at(d.c);
+  const pct = (f) => +(f * 100).toFixed(1);
+  if (d.type === 'fib') o.levels = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1].map((f) => ({ pct: pct(f), price: num(d.b.price + (d.a.price - d.b.price) * f) }));
+  if (d.type === 'fibext' && d.c) o.levels = [0, 0.618, 1, 1.272, 1.618, 2, 2.618].map((f) => ({ pct: pct(f), price: num(d.c.price + (d.b.price - d.a.price) * f) }));
   return o;
 }
 const NO_STATE = 'No saved data yet. Open the Investerview app once (version 1.2.0 or later) so it can save the watchlist and drawings to disk.';
@@ -697,7 +718,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'get_drawings',
-    description: 'Chart drawings the user saved in the Investerview app: trend lines, horizontal price levels, rectangles and Fibonacci retracements (with their level prices). Omit symbol to list every symbol that has drawings.',
+    description: 'Chart drawings the user saved in the Investerview app: trend lines, rays, horizontal price levels, channels, pitchforks, shapes, text notes, long/short positions (entry, target, stop) and Fibonacci retracements and extensions (with their level prices). Omit symbol to list every symbol that has drawings.',
     inputSchema: { type: 'object', properties: { symbol: symProp } },
     run: async (a) => {
       const s = readState();

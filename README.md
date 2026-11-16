@@ -14,8 +14,8 @@ A trading screening app: local charting and stock screening in the browser (the 
 - **Languages** — English, 简体中文, 繁體中文 and 日本語. The interface follows the browser/OS language automatically, with a selector in the top bar to override it. Translations live in `public/i18n.js`.
 - **Light and dark themes** — follows your system setting; the ☀ / ☾ button in the top bar switches and remembers your choice.
 - **Version label** — the running version is shown at the bottom of the left toolbar and in the console window.
-- **Indicators** — SMA, EMA, Bollinger Bands, volume, RSI, MACD, with editable periods.
-- **Drawing tools** — trend line, horizontal/vertical line, rectangle, Fibonacci retracement, measure. Drawings are saved per symbol and survive timeframe changes.
+- **Indicators** — 25 in all. On the price chart: SMA, EMA, WMA, linear regression line, VWAP, Bollinger Bands, Donchian and Keltner channels, Supertrend, Parabolic SAR, volume. Below it: RSI, MACD, Stochastic, CCI, Williams %R, MFI, ADX/DMI, ATR, standard deviation, ROC, momentum, OBV. Periods are editable.
+- **Drawing tools** — 25, grouped in the left toolbar: lines (trend, ray, extended, arrow, horizontal, horizontal ray, vertical, cross), channels (parallel, regression ±2σ, Andrews pitchfork), Fibonacci and Gann (retracement, extension, fan, time zones, Gann fan), shapes (rectangle, ellipse, triangle), measuring (measure, price range, date range, long/short position with risk : reward, anchored VWAP) and text. Select a drawing and drag its handles to adjust it. Drawings are saved per symbol and survive timeframe changes.
 - **Watchlist** — sections, drag-to-reorder, live last price and daily change.
 - **Import** — reads a watchlist exported from TradingView (`EXCHANGE:SYMBOL` text, including `###Section` headings) and converts the symbols.
 - **Screener** — scan US large caps, ETFs, crypto, FX/commodities, Japan large caps, your watchlist or a custom list; filter by price, change %, RSI, relative volume, distance from 52-week high and position against the 50/200-day averages.
@@ -101,7 +101,7 @@ Running from source instead: `"command": "node", "args": ["C:\\path\\to\\server.
 | `get_technicals` | SMA 20/50/200, EMA 20, RSI 14, MACD, Bollinger Bands |
 | `run_screener` | A built-in universe, your watchlist or a custom list, filtered and sorted |
 | `get_watchlist` | Your watchlist by section, with quotes |
-| `get_drawings` | Your saved trend lines, price levels and Fibonacci retracements |
+| `get_drawings` | Your saved drawings: lines, price levels, channels, positions, text notes and Fibonacci levels |
 
 There is also a ready-made prompt, `watchlist_report`. Or just ask: "write a morning report on my Investerview watchlist".
 
