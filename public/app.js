@@ -96,7 +96,9 @@ const state = {
   symbol: store.get('symbol', 'AAPL'),
   tf: store.get('tf', '1D'),
   type: store.get('type', 'candles'),
-  log: store.get('log', false),
+  scale: store.get('scale', store.get('log', false) ? 1 : 0), // price scale: 0 regular, 1 log, 2 percent, 3 indexed to 100
+  compare: store.get('compare', []), // other symbols drawn as lines on the chart
+  raw: [], // bars as loaded; state.data is what the chart shows (Renko bricks in the Renko chart)
   ext: store.get('ext', false),
   extRuns: [],
   indicators: store.get('indicators', [{ id: 1, type: 'SMA', period: 50 }, { id: 2, type: 'SMA', period: 200 }, { id: 3, type: 'VOL' }]),
@@ -277,6 +279,42 @@ function heikin(d) {
   });
   return o;
 }
+// Renko: a new brick each time the close moves one brick size past the last brick; a turn needs two sizes.
+// Brick size is the 14-bar ATR, rounded to two digits. Each brick carries the time of the bar that made it.
+function renkoSize(d) {
+  const a = atr(d, 14); let v = null;
+  for (let i = a.length - 1; i >= 0 && v == null; i--) v = a[i];
+  if (!(v > 0)) v = d[d.length - 1].close * 0.01;
+  if (!(v > 0)) return 0;
+  const mag = 10 ** (Math.floor(Math.log10(v)) - 1);
+  return Math.round(v / mag) * mag;
+}
+function renko(d, size) {
+  const o = []; if (!d.length || !(size > 0)) return o;
+  let lo = Math.floor(d[0].close / size) * size, hi = lo, vol = 0, lastT = 0;
+  const add = (open, close, src) => {
+    lastT = Math.max(src.time, lastT + 1);
+    o.push({ time: lastT, open, close, high: Math.max(open, close), low: Math.min(open, close), volume: vol });
+    vol = 0;
+  };
+  for (const b of d) {
+    vol += b.volume || 0;
+    let guard = 0;
+    while (b.close >= hi + size * 0.999999 && guard++ < 500) { add(hi, hi + size, b); lo = hi; hi += size; }
+    while (b.close <= lo - size * 0.999999 && guard++ < 500) { add(lo, lo - size, b); hi = lo; lo -= size; }
+  }
+  return o;
+}
+// state.data from state.raw for the current chart type
+function derive() {
+  state.brick = 0;
+  let d = state.raw;
+  if (state.type === 'renko') { state.brick = renkoSize(d); const r = renko(d, state.brick); if (r.length > 1) d = r; else state.brick = 0; }
+  state.data = d;
+  state.extRuns = []; // [firstIndex, lastIndex] of each stretch of pre-market / after-hours bars
+  d.forEach((b, i) => { if (b.x) { const r = state.extRuns[state.extRuns.length - 1]; if (r && r[1] === i - 1) r[1] = i; else state.extRuns.push([i, i]); } });
+  timeIdx = new Map(d.map((b, i) => [b.time, i]));
+}
 const toLine = (d, a) => { const o = []; for (let i = 0; i < d.length; i++) if (a[i] != null) o.push({ time: d[i].time, value: a[i] }); return o; };
 
 // ---------------------------------------------------------------- formatting
@@ -376,14 +414,18 @@ function buildChart(keepRange) {
     layout: { background: { color: C.bg }, textColor: C.text, fontFamily: 'system-ui, "Segoe UI", sans-serif', attributionLogo: false, panes: { separatorColor: C.border, separatorHoverColor: 'rgba(76,141,255,.25)', enableResize: true } },
     grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
     crosshair: { mode: 0 },
-    rightPriceScale: { borderColor: C.border, mode: state.log ? 1 : 0 },
+    rightPriceScale: { borderColor: C.border, mode: state.scale === 1 ? 1 : 0 },
     timeScale: { borderColor: C.border, timeVisible: intraday, secondsVisible: false, rightOffset: 6 },
   });
 
   const pr = precision();
   const pf = { priceFormat: { type: 'price', precision: pr, minMove: 1 / 10 ** pr } };
   const ud = { upColor: C.up, downColor: C.down };
-  if (state.type === 'line') S.main = chart.addSeries(LW.LineSeries, { color: C.accent, lineWidth: 2, ...pf });
+  if (state.type === 'line' || state.type === 'markers' || state.type === 'step') S.main = chart.addSeries(LW.LineSeries, { color: C.accent, lineWidth: 2, pointMarkersVisible: state.type === 'markers', lineType: state.type === 'step' ? 1 : 0, ...pf });
+  else if (state.type === 'baseline') S.main = chart.addSeries(LW.BaselineSeries, { baseValue: { type: 'price', price: 0 }, topLineColor: C.up, bottomLineColor: C.down, topFillColor1: rgba(C.up, 0.3), topFillColor2: rgba(C.up, 0.03), bottomFillColor1: rgba(C.down, 0.03), bottomFillColor2: rgba(C.down, 0.3), lineWidth: 2, ...pf });
+  else if (state.type === 'columns') S.main = chart.addSeries(LW.HistogramSeries, { color: C.accent, ...pf });
+  else if (state.type === 'hlc') S.main = chart.addSeries(LW.BarSeries, { ...ud, openVisible: false, ...pf });
+  else if (state.type === 'hollow') S.main = chart.addSeries(LW.CandlestickSeries, { ...ud, borderVisible: true, ...pf });
   else if (state.type === 'area') S.main = chart.addSeries(LW.AreaSeries, { lineColor: C.accent, topColor: rgba(C.accent, 0.35), bottomColor: rgba(C.accent, 0), lineWidth: 2, ...pf });
   else if (state.type === 'bars') S.main = chart.addSeries(LW.BarSeries, { ...ud, ...pf });
   else S.main = chart.addSeries(LW.CandlestickSeries, { ...ud, borderVisible: false, wickUpColor: C.up, wickDownColor: C.down, ...pf });
@@ -394,6 +436,11 @@ function buildChart(keepRange) {
     const it = makeIndicator(ind, PALETTE[colorI++ % PALETTE.length], () => ++pane);
     if (it) S.inds.push(it);
   }
+  S.cmp = [];
+  if (state.type !== 'renko') state.compare.forEach((sym, i) => {
+    const color = CMP_COLORS[i % CMP_COLORS.length];
+    S.cmp.push({ sym, color, vals: [], series: chart.addSeries(LW.LineSeries, { ...lineOpts(color), title: sym, lastValueVisible: state.scale >= 2, ...pf }) });
+  });
   applyData();
   try { chart.panes().forEach((p, i) => { if (i > 0) p.setHeight(130); }); } catch { /* default pane sizes */ }
 
@@ -403,6 +450,13 @@ function buildChart(keepRange) {
   requestAnimationFrame(() => { if (chart === built) chart.timeScale().setVisibleLogicalRange(view); }); // again once the chart has its size
   chart.subscribeCrosshairMove((p) => updateLegend(p.time != null && timeIdx.has(p.time) ? timeIdx.get(p.time) : state.data.length - 1));
   chart.subscribeClick((p) => { if (p.point) selectAt(p.point.x, p.point.y); });
+  if (state.scale >= 2) { // percent / indexed: every line on the price scale is labelled against the first bar on screen
+    let on = [S.main, ...S.cmp.map((c) => c.series)];
+    try { on = chart.panes()[0].getSeries().filter((s) => s.options().priceScaleId !== 'vol'); } catch { /* main and compare lines only */ }
+    for (const s of on) s.applyOptions({ priceFormat: { type: 'custom', minMove: 1 / 10 ** pr, formatter: viewFmt } });
+  }
+  chart.timeScale().subscribeVisibleLogicalRangeChange(() => onView(false));
+  onView(true, view.from);
   renderChips();
   updateLegend(n - 1);
   drawIbLines(); if (ib) renderIb(); renderPaper();
@@ -410,14 +464,99 @@ function buildChart(keepRange) {
 
 function applyData() {
   const d = state.data, closes = d.map((b) => b.close);
-  if (state.type === 'line' || state.type === 'area') S.main.setData(d.map((b) => ({ time: b.time, value: b.close })));
+  const tone = (i) => (i && d[i].close < d[i - 1].close ? C.down : C.up); // by the change from the bar before
+  if (LINE_TYPES.has(state.type)) S.main.setData(d.map((b) => ({ time: b.time, value: b.close })));
+  else if (state.type === 'columns') S.main.setData(d.map((b, i) => ({ time: b.time, value: b.close, color: tone(i) })));
+  else if (state.type === 'hilo') S.main.setData(d.map((b, i) => ({ time: b.time, open: b.low, high: b.high, low: b.low, close: b.high, color: tone(i), borderColor: tone(i), wickColor: tone(i) })));
+  else if (state.type === 'hollow') S.main.setData(d.map((b, i) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close, color: b.close >= b.open ? C.bg : tone(i), borderColor: tone(i), wickColor: tone(i) })));
   else S.main.setData((state.type === 'heikin' ? heikin(d) : d).map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
   for (const it of S.inds) it.apply(d, closes);
+  for (const c of S.cmp || []) c.vals = alignTo(d, cmpData.get(c.sym));
+  onView(true);
+}
+
+// ---------------------------------------------------------------- compare
+const LINE_TYPES = new Set(['line', 'markers', 'step', 'area', 'baseline']);
+const CMP_COLORS = ['#f5a524', '#b072f5', '#2bc4c4', '#ef5da8'];
+const cmpData = new Map(); // symbol -> bars for the current timeframe
+// closes of another symbol on the charted symbol's bars: the latest close at or before each bar (same day on daily charts and above)
+function alignTo(d, bars) {
+  const out = new Array(d.length).fill(null); if (!bars || !bars.length) return out;
+  const key = state.step >= 86400 ? (t) => Math.floor(t / 86400) : (t) => t;
+  let j = -1;
+  for (let i = 0; i < d.length; i++) {
+    const k = key(d[i].time);
+    while (j + 1 < bars.length && key(bars[j + 1].time) <= k) j++;
+    if (j >= 0) out[i] = bars[j].close;
+  }
+  return out;
+}
+async function loadCompare(fresh) {
+  const [interval, range] = TF[state.tf], tag = state.tf + '|' + state.ext;
+  await Promise.all(state.compare.map(async (sym) => {
+    try {
+      const j = await api(`/api/candles?symbol=${encodeURIComponent(sym)}&interval=${interval}&range=${range}${state.ext ? '&ext=1' : ''}${fresh ? '&fresh=1' : ''}`);
+      if (tag === state.tf + '|' + state.ext && j.bars.length) cmpData.set(sym, j.bars);
+    } catch { /* keep what we have; the chip shows a dash */ }
+  }));
+}
+function setScale(mode) {
+  state.scale = mode; store.set('scale', mode); $('#scale').value = String(mode);
+  if (chart && state.data.length) buildChart(true);
+}
+async function addCompare(raw) {
+  const sym = String(raw || '').trim().toUpperCase();
+  if (!sym || sym === state.symbol || state.compare.includes(sym)) return;
+  if (state.compare.length >= CMP_COLORS.length) { alert(t('You can compare up to {0} symbols at a time.', CMP_COLORS.length)); return; }
+  const [interval, range] = TF[state.tf];
+  try {
+    const j = await api(`/api/candles?symbol=${encodeURIComponent(sym)}&interval=${interval}&range=${range}${state.ext ? '&ext=1' : ''}`);
+    if (!j.bars.length) throw new Error('empty');
+    cmpData.set(sym, j.bars);
+  } catch { alert(t('No data for {0} on this timeframe', sym)); return; }
+  state.compare.push(sym); store.set('compare', state.compare);
+  if (state.scale === 0) setScale(2); // different prices only compare as percentages
+  if (state.data.length) buildChart(true);
+}
+// The first bar on screen is the reference: the Baseline chart, the percent and indexed scales and the
+// compare lines are all measured from it. Compare lines are rescaled to start at the charted symbol's price there.
+let viewI = -1, viewBase = 1;
+const viewFmt = (p) => {
+  const r = p / viewBase;
+  return state.scale === 3 ? (r * 100).toFixed(2) : (r >= 1 ? '+' : '') + ((r - 1) * 100).toFixed(2) + '%';
+};
+function onView(force, from) {
+  if (!chart || !S.main || !state.data.length) return;
+  const d = state.data, r = chart.timeScale().getVisibleLogicalRange();
+  const f = r ? r.from : from; if (f == null) return;
+  const i = Math.max(0, Math.min(d.length - 1, Math.ceil(f)));
+  if (i === viewI && !force) return;
+  viewI = i; viewBase = d[i].close || 1;
+  if (state.type === 'baseline') S.main.applyOptions({ baseValue: { type: 'price', price: viewBase } });
+  for (const c of S.cmp || []) {
+    let k = i; while (k < d.length && c.vals[k] == null) k++;
+    const m = k < d.length && c.vals[k] ? d[k].close / c.vals[k] : null;
+    c.series.setData(m == null ? [] : toLine(d, c.vals.map((v) => (v == null ? null : v * m))));
+  }
+  if (state.scale >= 2) S.main.applyOptions({ priceFormat: { type: 'custom', minMove: 1 / 10 ** precision(), formatter: (p) => viewFmt(p) } }); // redraws the labels
 }
 
 // ---------------------------------------------------------------- legend + indicator chips
 function renderChips() {
   const box = $('#chips'); box.textContent = '';
+  for (const sym of state.compare) {
+    const c = (S.cmp || []).find((x) => x.sym === sym);
+    const chip = el('span', { className: 'chip' }, el('span', { className: 'dot' }), el('span', { textContent: sym }));
+    chip.firstChild.style.background = c ? c.color : C.text;
+    const val = el('span', { className: 'muted', textContent: c ? '' : t('not shown in Renko') });
+    if (c) c.valEl = val;
+    const rm = el('button', { textContent: '✕', title: t('Remove') });
+    rm.addEventListener('click', () => {
+      state.compare = state.compare.filter((x) => x !== sym); store.set('compare', state.compare); cmpData.delete(sym);
+      if (state.data.length) buildChart(true);
+    });
+    chip.append(val, rm); box.append(chip);
+  }
   for (const it of S.inds) {
     const ind = it.ind;
     const chip = el('span', { className: 'chip' }, el('span', { className: 'dot' }), el('span', { textContent: ind.type === 'VOL' ? t('Vol') : ind.type }));
@@ -446,7 +585,7 @@ function renderChips() {
 function updateLegend(i) {
   const d = state.data, b = d[i];
   $('#lgSym').textContent = state.symbol;
-  $('#lgName').textContent = [state.meta.name !== state.symbol && state.meta.name, state.meta.exchange || (WEB && state.meta.source), state.tf].filter(Boolean).join(' · ');
+  $('#lgName').textContent = [state.meta.name !== state.symbol && state.meta.name, state.meta.exchange || (WEB && state.meta.source), state.tf, state.brick ? t('Renko, brick {0}', fmtP(state.brick)) : null].filter(Boolean).join(' · ');
   const src = $('#lgSrc'), backup = state.meta.source && state.meta.source !== 'Yahoo Finance';
   src.hidden = !backup || WEB; // the web version names its source in the legend line instead
   if (backup) { src.textContent = t('Backup data: {0}', state.meta.source); src.title = t('Yahoo Finance is not available from this network, so prices come from a backup source. Extended hours and symbol search need Yahoo.'); }
@@ -459,6 +598,7 @@ function updateLegend(i) {
   }
   if (chg != null) box.append(el('span', { className: cls(chg), textContent: fmtPct(chg) }));
   if (b.x) box.append(el('span', { className: 'tag', textContent: t(b.time % 86400 < 43200 ? 'Pre-market' : 'After-hours') }));
+  for (const c of S.cmp || []) if (c.valEl) c.valEl.textContent = c.vals[i] == null ? '–' : fmtLast(c.vals[i]);
   for (const it of S.inds) {
     if (!it.valEl) continue;
     const shown = it.vals.map((a) => a[i] == null ? null : it.isVol ? fmtVol(a[i]) : it.big ? (a[i] < 0 ? '-' : '') + fmtVol(Math.abs(a[i])) : it.pane ? a[i].toFixed(2) : fmtP(a[i])).filter((x) => x != null);
@@ -492,18 +632,16 @@ async function load({ refresh = false, fresh = false } = {}) {
   const [interval, range] = TF[state.tf];
   if (!refresh) showMsg(t('Loading {0}…', state.symbol));
   try {
-    const j = await api(`/api/candles?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&range=${range}${state.ext ? '&ext=1' : ''}${fresh ? '&fresh=1' : ''}`);
+    const [j] = await Promise.all([api(`/api/candles?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&range=${range}${state.ext ? '&ext=1' : ''}${fresh ? '&fresh=1' : ''}`), loadCompare(fresh)]);
     if (seq !== loadSeq) return;
     markUpdated();
     if (!j.bars.length) throw new Error(t('No data for {0} on this timeframe', state.symbol));
-    state.data = j.bars; state.meta = j;
-    state.extRuns = []; // [firstIndex, lastIndex] of each stretch of pre-market / after-hours bars
-    j.bars.forEach((b, i) => { if (b.x) { const r = state.extRuns[state.extRuns.length - 1]; if (r && r[1] === i - 1) r[1] = i; else state.extRuns.push([i, i]); } });
-    timeIdx = new Map(j.bars.map((b, i) => [b.time, i]));
+    state.raw = j.bars; state.meta = j;
     const diffs = []; for (let i = Math.max(1, j.bars.length - 60); i < j.bars.length; i++) diffs.push(j.bars[i].time - j.bars[i - 1].time);
     diffs.sort((a, b) => a - b); state.step = diffs[diffs.length >> 1] || 86400;
+    derive();
     showMsg(null);
-    if (refresh && chart) { applyData(); updateLegend(j.bars.length - 1); } else buildChart(false);
+    if (refresh && chart) { applyData(); updateLegend(state.data.length - 1); } else buildChart(false);
     document.title = `${state.symbol} ${fmtP(j.price)} · ChartDesk`;
   } catch (e) {
     if (seq !== loadSeq) return;
@@ -534,8 +672,20 @@ for (const k of Object.keys(TF)) {
   tfs.append(b);
 }
 $('#type').value = state.type;
-$('#type').addEventListener('change', (e) => { state.type = e.target.value; store.set('type', state.type); if (state.data.length) buildChart(true); });
-$('#log').checked = state.log;
+$('#type').addEventListener('change', (e) => {
+  const wasRenko = state.type === 'renko';
+  state.type = e.target.value; store.set('type', state.type);
+  if (!state.raw.length) return;
+  const renkoNow = state.type === 'renko';
+  if (wasRenko || renkoNow) derive(); // the bars themselves change, so the old scroll position means nothing
+  buildChart(!(wasRenko || renkoNow));
+});
+$('#scale').value = String(state.scale);
+$('#scale').addEventListener('change', (e) => setScale(Number(e.target.value)));
+$('#cmpBtn').addEventListener('click', () => {
+  const v = prompt(t('Symbol to compare with {0} (for example SPY, QQQ, BTC-USD, 7203.T):', state.symbol));
+  if (v) addCompare(v);
+});
 // light / dark theme: follows the system setting until the user picks one with the button
 let theme = store.get('theme', null);
 const sysLight = window.matchMedia('(prefers-color-scheme: light)');
@@ -557,7 +707,6 @@ $('#refresh').addEventListener('click', async (e) => {
   b.classList.add('busy');
   try { await Promise.all([state.view === 'chart' ? load({ refresh: true, fresh: true }) : null, refreshWatch(true)]); } finally { b.classList.remove('busy'); }
 });
-$('#log').addEventListener('change', (e) => { state.log = e.target.checked; store.set('log', state.log); if (chart) chart.priceScale('right').applyOptions({ mode: state.log ? 1 : 0 }); });
 
 const indMenu = $('#indMenu');
 const isBelow = (type) => !!IND[type].pane || type === 'RSI' || type === 'MACD';
@@ -1230,7 +1379,7 @@ const paperQ = new Map(); // latest price of symbols that are held or have an or
 const fmtQty = (q) => String(+q.toFixed(4));
 const savePaper = () => store.set('paper', state.paper);
 function paperPrice(sym) {
-  if (sym === state.symbol && state.data.length) return state.data[state.data.length - 1].close;
+  if (sym === state.symbol && state.raw.length) return state.raw[state.raw.length - 1].close;
   const r = watchData.get(sym);
   return paperQ.get(sym) ?? (r && r.last != null ? r.last : null);
 }

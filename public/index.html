@@ -21,16 +21,30 @@
   <nav id="tfs" class="seg"></nav>
   <select id="type" title="Chart type" data-i18n-title>
     <option value="candles" data-i18n>Candles</option>
+    <option value="hollow" data-i18n>Hollow candles</option>
     <option value="heikin" data-i18n>Heikin Ashi</option>
     <option value="bars" data-i18n>Bars</option>
+    <option value="hlc" data-i18n>HLC bars</option>
+    <option value="hilo" data-i18n>High-low</option>
     <option value="line" data-i18n>Line</option>
+    <option value="markers" data-i18n>Line with markers</option>
+    <option value="step" data-i18n>Step line</option>
     <option value="area" data-i18n>Area</option>
+    <option value="baseline" data-i18n>Baseline</option>
+    <option value="columns" data-i18n>Columns</option>
+    <option value="renko" data-i18n>Renko</option>
   </select>
+  <button id="cmpBtn" title="Add another symbol to the chart as a line, to compare how the two have moved." data-i18n-title data-i18n>Compare</button>
   <div class="menu">
     <button id="indBtn" data-i18n>Indicators ▾</button>
     <ul id="indMenu" hidden></ul>
   </div>
-  <label class="chk"><input type="checkbox" id="log"> <span data-i18n>Log</span></label>
+  <select id="scale" title="Price scale" data-i18n-title>
+    <option value="0" data-i18n>Regular scale</option>
+    <option value="1" data-i18n>Log scale</option>
+    <option value="2" data-i18n>Percent scale</option>
+    <option value="3" data-i18n>Indexed to 100</option>
+  </select>
   <label class="chk" title="Show pre-market and after-hours trading on the 1m–1h charts (shaded) and in the watchlist. Stocks and ETFs only." data-i18n-title><input type="checkbox" id="ext"> <span data-i18n>Ext. hours</span></label>
   <button id="refresh" title="Refresh prices now. They also update by themselves: the chart every 30 seconds, the watchlist every minute." data-i18n-title>⟳</button>
   <span id="updated"></span>
