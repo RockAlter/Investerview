@@ -414,6 +414,16 @@ function writeState(s) {
 }
 const isNum = (v) => typeof v === 'number' && isFinite(v);
 const isPoint = (p) => p && isNum(p.time) && isNum(p.price);
+// The practice (paper trading) account: virtual cash, positions, working orders and the trade history.
+function cleanPaper(p) {
+  if (!p || typeof p !== 'object' || !isNum(p.cash) || !isNum(p.start)) return null;
+  const pos = {}, side = (x) => x === 'BUY' || x === 'SELL';
+  for (const [sym, v] of Object.entries(p.pos && typeof p.pos === 'object' ? p.pos : {})) if (SYMBOL_RE.test(sym) && v && isNum(v.qty) && v.qty && isNum(v.avg)) pos[sym] = { qty: v.qty, avg: v.avg };
+  const rows = (a) => (Array.isArray(a) ? a : []).filter((o) => o && SYMBOL_RE.test(o.sym) && side(o.side) && isNum(o.qty) && o.qty > 0 && isNum(o.price) && ['MKT', 'LMT', 'STP'].includes(o.type));
+  const orders = rows(p.orders).filter((o) => o.type !== 'MKT').slice(0, 100).map((o) => ({ id: isNum(o.id) ? o.id : 0, sym: o.sym, side: o.side, qty: o.qty, type: o.type, price: o.price, time: isNum(o.time) ? o.time : 0 }));
+  const trades = rows(p.trades).slice(-300).map((o) => ({ time: isNum(o.time) ? o.time : 0, sym: o.sym, side: o.side, qty: o.qty, price: o.price, type: o.type, pnl: isNum(o.pnl) ? o.pnl : null }));
+  return { start: p.start, cash: p.cash, realized: isNum(p.realized) ? p.realized : 0, pos, orders, trades };
+}
 function cleanState(s) {
   if (!s || typeof s !== 'object') throw new Error('Invalid data');
   const str = (a, max) => (Array.isArray(a) ? a : []).filter((x) => typeof x === 'string' && x.length <= 40).slice(0, max);
@@ -431,7 +441,9 @@ function cleanState(s) {
   }
   const indicators = (Array.isArray(s.indicators) ? s.indicators : []).filter((i) => i && typeof i.type === 'string' && i.type.length <= 8).slice(0, 20)
     .map((i) => (isNum(i.period) ? { id: i.id, type: i.type, period: i.period } : { id: i.id, type: i.type }));
-  return { watch: str(s.watch, 200), collapsed: str(s.collapsed, 100), drawings, indicators, updated: Date.now() };
+  const out = { watch: str(s.watch, 200), collapsed: str(s.collapsed, 100), drawings, indicators, updated: Date.now() };
+  const paper = cleanPaper(s.paper); if (paper) out.paper = paper;
+  return out;
 }
 function readBody(req, max) {
   return new Promise((resolve, reject) => {
@@ -551,7 +563,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.6.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '1.7.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',

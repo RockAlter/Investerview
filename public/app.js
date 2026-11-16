@@ -17,7 +17,7 @@ const store = {
 };
 // The watchlist, drawings and indicators are also mirrored to a file on disk through the local
 // server, so they survive a cleared browser and the MCP server can read them. The file wins on start-up.
-const SYNCED = new Set(['watch', 'drawings', 'collapsed', 'indicators']);
+const SYNCED = new Set(['watch', 'drawings', 'collapsed', 'indicators', 'paper']);
 let syncReady = false, pushTimer = 0;
 // Web version (opened from a website such as GitHub Pages, not from the desktop app): there is no
 // local server, so web-data.js fetches prices in the browser, through the data proxy (worker/) and
@@ -28,7 +28,7 @@ function pushState() {
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     fetch('/api/state', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ watch: state.watch, drawings: state.drawings, collapsed: [...collapsed], indicators: state.indicators }) }).catch(() => {});
+      body: JSON.stringify({ watch: state.watch, drawings: state.drawings, collapsed: [...collapsed], indicators: state.indicators, paper: state.paper }) }).catch(() => {});
   }, 400);
 }
 async function pullState() {
@@ -38,6 +38,7 @@ async function pullState() {
       state.watch = s.watch; state.drawings = s.drawings || {};
       if (Array.isArray(s.indicators)) state.indicators = s.indicators;
       collapsed.clear(); for (const c of s.collapsed || []) collapsed.add(c);
+      if (s.paper && typeof s.paper.cash === 'number') { state.paper = s.paper; store.set('paper', state.paper); }
       store.set('watch', state.watch); store.set('drawings', state.drawings); store.set('indicators', state.indicators); store.set('collapsed', [...collapsed]);
       syncReady = true;
     } else { syncReady = true; pushState(); } // no file yet: create it from this browser's data
@@ -101,6 +102,7 @@ const state = {
   indicators: store.get('indicators', [{ id: 1, type: 'SMA', period: 50 }, { id: 2, type: 'SMA', period: 200 }, { id: 3, type: 'VOL' }]),
   watch: store.get('watch', DEFAULT_WATCH),
   drawings: store.get('drawings', {}),
+  paper: store.get('paper', null) || { start: 100000, cash: 100000, realized: 0, pos: {}, orders: [], trades: [] }, // practice account
   view: 'chart',
   tool: 'cursor',
   data: [], meta: {}, step: 86400,
@@ -403,7 +405,7 @@ function buildChart(keepRange) {
   chart.subscribeClick((p) => { if (p.point) selectAt(p.point.x, p.point.y); });
   renderChips();
   updateLegend(n - 1);
-  drawIbLines(); if (ib) renderIb();
+  drawIbLines(); if (ib) renderIb(); renderPaper();
 }
 
 function applyData() {
@@ -696,7 +698,7 @@ api('/api/version').then((v) => {
   verEl.title = 'Investerview ' + v.version + (WEB ? ' (web)' : '') + ' – ' + t('release notes on GitHub');
 }).catch(() => {});
 if (WEB) { // no local server: hide what needs one, and say so
-  $('#sideTabs').hidden = true; $('#ext').closest('label').hidden = true; $('#impWatch').hidden = true;
+  $('#sideTabs [data-side=pos]').hidden = true; $('#ext').closest('label').hidden = true; $('#impWatch').hidden = true;
   const note = $('#webNote'); note.hidden = false; note.href = window.WebData.DOWNLOAD;
   note.textContent = t('Web version'); note.title = t('Prices can be delayed, and intraday, FX and futures charts depend on the data proxy being reachable. IBKR positions and the saved data file need the desktop app: click to download it. Your watchlist here is kept in this browser only.');
 }
@@ -1201,18 +1203,177 @@ function renderIb() {
 function drawIbLines() {
   for (const l of ibLines) if (l.series === S.main) { try { l.series.removePriceLine(l.line); } catch { /* already gone */ } } // lines on a rebuilt chart went with it
   ibLines = [];
-  if (!ib || ib.state !== 'ok' || !S.main) return;
+  if (!S.main) return;
   const add = (price, color, title) => { if (price > 0) ibLines.push({ series: S.main, line: S.main.createPriceLine({ price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title }) }); };
-  for (const p of ib.positions) if (p.chart === state.symbol) add(p.avgPrice, C.cost, `${t('Avg cost')} · ${p.qty}`);
-  for (const o of ib.orders) if (o.chart === state.symbol) add(o.price, o.side === 'BUY' ? C.up : C.down, `${o.side} ${o.remaining == null ? '' : o.remaining} ${o.type}`.replace(/\s+/g, ' '));
+  if (ib && ib.state === 'ok') {
+    for (const p of ib.positions) if (p.chart === state.symbol) add(p.avgPrice, C.cost, `${t('Avg cost')} · ${p.qty}`);
+    for (const o of ib.orders) if (o.chart === state.symbol) add(o.price, o.side === 'BUY' ? C.up : C.down, `${o.side} ${o.remaining == null ? '' : o.remaining} ${o.type}`.replace(/\s+/g, ' '));
+  }
+  const pp = state.paper.pos[state.symbol]; // the practice account's lines
+  if (pp) add(pp.avg, C.cost, `${t('Paper')} · ${t('Avg cost')} · ${fmtQty(pp.qty)}`);
+  for (const o of state.paper.orders) if (o.sym === state.symbol) add(o.price, o.side === 'BUY' ? C.up : C.down, `${t('Paper')} · ${t(o.side === 'BUY' ? 'Buy' : 'Sell')} ${fmtQty(o.qty)} ${t(ORDER_TYPES[o.type])}`);
 }
 for (const b of $('#sideTabs').children) {
   b.addEventListener('click', () => {
     side = b.dataset.side;
     for (const x of $('#sideTabs').children) x.classList.toggle('on', x === b);
-    $('#sideWatch').hidden = side !== 'watch'; $('#sidePos').hidden = side !== 'pos';
+    $('#sideWatch').hidden = side !== 'watch'; $('#sidePos').hidden = side !== 'pos'; $('#sidePaper').hidden = side !== 'paper';
     if (side === 'pos' && (!ib || ib.state !== 'ok')) { renderIb(); refreshIb(); }
+    if (side === 'paper') { renderPaper(); paperTick(); }
   });
+}
+
+// ---------------------------------------------------------------- paper trading (practice account)
+// Virtual money only: orders are filled here in the page at the latest price the app has. Nothing is sent to a broker.
+const ORDER_TYPES = { MKT: 'Market', LMT: 'Limit', STP: 'Stop' };
+const paperQ = new Map(); // latest price of symbols that are held or have an order but are not on the chart
+const fmtQty = (q) => String(+q.toFixed(4));
+const savePaper = () => store.set('paper', state.paper);
+function paperPrice(sym) {
+  if (sym === state.symbol && state.data.length) return state.data[state.data.length - 1].close;
+  const r = watchData.get(sym);
+  return paperQ.get(sym) ?? (r && r.last != null ? r.last : null);
+}
+function paperTotals() {
+  let equity = state.paper.cash, unreal = 0, gross = 0;
+  for (const [s, p] of Object.entries(state.paper.pos)) { const px = paperPrice(s) ?? p.avg; equity += p.qty * px; unreal += (px - p.avg) * p.qty; gross += Math.abs(p.qty * px); }
+  return { equity, unreal, gross };
+}
+// No borrowing: after the order, the value of everything held (long or short) may not exceed the account's equity.
+function paperBlock(sym, sideName, qty, price) {
+  const cur = (state.paper.pos[sym] || { qty: 0 }).qty, next = cur + (sideName === 'BUY' ? qty : -qty);
+  if (Math.abs(next) <= Math.abs(cur)) return null; // only reduces a position
+  const { equity, gross } = paperTotals(), after = gross - Math.abs(cur * price) + Math.abs(next * price);
+  return after > equity + 1e-6 ? t('Not enough buying power: positions would be worth {0}, the account {1}.', fmtP(after, 2), fmtP(equity, 2)) : null;
+}
+function paperFill(sym, sideName, qty, price, type) {
+  const P = state.paper, q = sideName === 'BUY' ? qty : -qty, cur = P.pos[sym] || { qty: 0, avg: 0 };
+  let pnl = null;
+  if (cur.qty && Math.sign(cur.qty) !== Math.sign(q)) { // closes all or part of the position; anything beyond that opens the other way
+    const closed = Math.min(Math.abs(q), Math.abs(cur.qty)), left = cur.qty + q;
+    pnl = (price - cur.avg) * closed * Math.sign(cur.qty); P.realized += pnl;
+    if (Math.sign(left) !== Math.sign(cur.qty)) cur.avg = price;
+    cur.qty = left;
+  } else { cur.avg = (cur.avg * cur.qty + price * q) / (cur.qty + q); cur.qty += q; }
+  P.cash -= q * price;
+  if (Math.abs(cur.qty) < 1e-9) delete P.pos[sym]; else P.pos[sym] = cur;
+  P.trades.push({ time: Math.floor(Date.now() / 1000), sym, side: sideName, qty, price, type, pnl });
+  if (P.trades.length > 300) P.trades.splice(0, P.trades.length - 300);
+}
+let paperBusy = false, paperNote = '';
+async function paperTick() { // refresh prices, then fill limit and stop orders whose price was reached
+  if (paperBusy) return; paperBusy = true;
+  try {
+    const P = state.paper, syms = [...new Set([...Object.keys(P.pos), ...P.orders.map((o) => o.sym)])].filter((s) => s !== state.symbol);
+    if (syms.length) {
+      try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',')); for (const r of j.rows) if (r.last != null) paperQ.set(r.symbol, r.last); } catch { /* keep the last known prices */ }
+    }
+    let changed = false;
+    for (const o of [...P.orders]) {
+      const px = paperPrice(o.sym); if (px == null) continue;
+      const below = (o.type === 'LMT') === (o.side === 'BUY'); // buy limit and sell stop wait for a lower price
+      if (below ? px > o.price : px < o.price) continue;
+      P.orders = P.orders.filter((x) => x !== o); changed = true;
+      const err = paperBlock(o.sym, o.side, o.qty, px);
+      if (err) paperNote = t('Order for {0} cancelled.', o.sym) + ' ' + err;
+      else { paperFill(o.sym, o.side, o.qty, px, o.type); paperNote = t('Filled: {0} {1} {2} at {3}', t(o.side === 'BUY' ? 'Buy' : 'Sell'), fmtQty(o.qty), o.sym, fmtLast(px)); }
+    }
+    if (changed) { savePaper(); drawIbLines(); }
+    if (side === 'paper') renderPaper();
+  } finally { paperBusy = false; }
+}
+function paperOrder(sym, sideName, qty, type, limit) {
+  const px = paperPrice(sym);
+  if (!(qty > 0)) return t('Enter a quantity above zero.');
+  if (type === 'MKT') {
+    if (px == null) return t('No price for {0} yet.', sym);
+    const err = paperBlock(sym, sideName, qty, px); if (err) return err;
+    paperFill(sym, sideName, qty, px, 'MKT');
+    paperNote = t('Filled: {0} {1} {2} at {3}', t(sideName === 'BUY' ? 'Buy' : 'Sell'), fmtQty(qty), sym, fmtLast(px));
+  } else {
+    if (!(limit > 0)) return t('Enter the order price.');
+    if (state.paper.orders.length >= 100) return t('Too many working orders.');
+    state.paper.orders.push({ id: Date.now(), sym, side: sideName, qty, type, price: limit, time: Math.floor(Date.now() / 1000) });
+    paperNote = t('Order placed: {0} {1} {2}, {3} at {4}', t(sideName === 'BUY' ? 'Buy' : 'Sell'), fmtQty(qty), sym, t(ORDER_TYPES[type]), fmtLast(limit));
+  }
+  savePaper(); drawIbLines(); renderPaper();
+  if (type !== 'MKT') paperTick(); // fills at once if the price is already there
+  return null;
+}
+let paperUI = null;
+function buildPaper() { // the fixed part of the tab: summary, order ticket and the three lists; renderPaper fills in the numbers
+  const box = $('#sidePaper');
+  const reset = el('button', { textContent: t('Reset'), title: t('Start over with a fresh practice account') });
+  reset.addEventListener('click', () => {
+    const v = prompt(t('Starting cash for the new practice account:'), String(state.paper.start)); if (v == null) return;
+    const start = Math.min(1e12, Math.max(100, +String(v).replace(/[, ]/g, '') || 100000));
+    state.paper = { start, cash: start, realized: 0, pos: {}, orders: [], trades: [] }; paperNote = '';
+    savePaper(); drawIbLines(); renderPaper();
+  });
+  const ui = { sum: el('div', { className: 'ibsum' }), sym: el('b'), last: el('span'), qty: el('input', { type: 'number', min: '0', step: 'any', value: String(store.get('paperQty', 10)) }),
+    type: el('select'), price: el('input', { type: 'number', min: '0', step: 'any', placeholder: t('Price'), hidden: true }),
+    buy: el('button', { className: 'buy', textContent: t('Buy') }), sell: el('button', { className: 'sell', textContent: t('Sell') }), note: el('p', { className: 'pnote' }),
+    pos: el('div'), orders: el('div'), trades: el('div') };
+  for (const [k, name] of Object.entries(ORDER_TYPES)) ui.type.append(el('option', { value: k, textContent: t(name) }));
+  ui.type.addEventListener('change', () => { ui.price.hidden = ui.type.value === 'MKT'; if (!ui.price.hidden && !ui.price.value) { const px = paperPrice(state.symbol); if (px != null) ui.price.value = String(+px.toFixed(px < 10 ? 4 : 2)); } });
+  ui.qty.addEventListener('change', () => store.set('paperQty', +ui.qty.value || 10));
+  const go = (sideName) => { const err = paperOrder(state.symbol, sideName, +ui.qty.value, ui.type.value, +ui.price.value); if (err) { paperNote = err; renderPaper(); } };
+  ui.buy.addEventListener('click', () => go('BUY')); ui.sell.addEventListener('click', () => go('SELL'));
+  box.append(
+    el('div', { className: 'ibhead' }, el('span', { textContent: t('Practice account') }), el('span', { className: 'badge paper', textContent: t('PAPER') }), el('span', { className: 'grow' }), reset),
+    ui.sum,
+    el('h4', { textContent: t('Order') }),
+    el('div', { className: 'ticket' }, el('div', { className: 'trow' }, ui.sym, ui.last),
+      el('div', { className: 'trow' }, el('label', {}, el('span', { textContent: t('Quantity') }), ui.qty)),
+      el('div', { className: 'trow' }, ui.type, ui.price),
+      el('div', { className: 'trow' }, ui.buy, ui.sell), ui.note),
+    el('h4', { textContent: t('Positions') }), ui.pos, el('h4', { textContent: t('Working orders') }), ui.orders, el('h4', { textContent: t('History') }), ui.trades,
+    el('p', { className: 'pfoot', textContent: t('Virtual money only: nothing is sent to a broker. Orders fill at the latest price this app has, also when the market is closed. Limit and stop orders are checked about every 20 seconds while the app is open. Prices are not converted between currencies.') }));
+  return ui;
+}
+function renderPaper() {
+  if (side !== 'paper') return;
+  const ui = (paperUI ||= buildPaper()), P = state.paper, { equity, unreal } = paperTotals();
+  ui.sum.textContent = '';
+  const row = (label, text, tone) => ui.sum.append(el('span', { textContent: t(label) }), el('span', { className: tone == null ? '' : cls(tone), textContent: text }));
+  row('Account value', fmtP(equity, 2)); row('Cash', fmtP(P.cash, 2)); row('Unrealized P&L', signed(unreal), unreal); row('Realized P&L', signed(P.realized), P.realized);
+  row('Return', fmtPct((equity / P.start - 1) * 100), equity - P.start);
+  const px = paperPrice(state.symbol);
+  ui.sym.textContent = state.symbol; ui.last.textContent = px == null ? '–' : fmtLast(px);
+  ui.note.textContent = paperNote; ui.note.hidden = !paperNote;
+  const empty = (box, text) => box.append(el('p', { textContent: t(text) }));
+  ui.pos.textContent = '';
+  if (!Object.keys(P.pos).length) empty(ui.pos, 'No open positions.');
+  for (const [sym, p] of Object.entries(P.pos)) {
+    const last = paperPrice(sym), pnl = last == null ? null : (last - p.avg) * p.qty;
+    const close = el('button', { className: 'mini', textContent: t('Close'), title: t('Close this position at the latest price') });
+    close.addEventListener('click', (e) => { e.stopPropagation(); const err = paperOrder(sym, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty), 'MKT'); if (err) { paperNote = err; renderPaper(); } });
+    const r = el('div', { className: 'ibrow link' + (sym === state.symbol ? ' on' : '') },
+      el('div', {}, el('b', { textContent: sym }), el('small', { textContent: `${fmtQty(p.qty)} @ ${fmtLast(p.avg)}` })),
+      el('div', { className: 'r' }, el('span', { textContent: last == null ? '–' : fmtP(p.qty * last, 2) }),
+        el('small', { className: cls(pnl), textContent: pnl == null ? '–' : `${signed(pnl)}  (${fmtPct(pnl / Math.abs(p.avg * p.qty) * 100)})` }), close));
+    r.addEventListener('click', () => setSymbol(sym));
+    ui.pos.append(r);
+  }
+  ui.orders.textContent = '';
+  if (!P.orders.length) empty(ui.orders, 'No open orders.');
+  for (const o of P.orders) {
+    const cancel = el('button', { className: 'mini', textContent: t('Cancel') });
+    cancel.addEventListener('click', (e) => { e.stopPropagation(); P.orders = P.orders.filter((x) => x !== o); savePaper(); drawIbLines(); renderPaper(); });
+    const r = el('div', { className: 'ibrow link' },
+      el('div', {}, el('b', { className: o.side === 'BUY' ? 'up' : 'down', textContent: `${t(o.side === 'BUY' ? 'Buy' : 'Sell')} ${o.sym}` }), el('small', { textContent: `${fmtQty(o.qty)} · ${t(ORDER_TYPES[o.type])}` })),
+      el('div', { className: 'r' }, el('span', { textContent: fmtLast(o.price) }), cancel));
+    r.addEventListener('click', () => setSymbol(o.sym));
+    ui.orders.append(r);
+  }
+  ui.trades.textContent = '';
+  if (!P.trades.length) empty(ui.trades, 'No trades yet.');
+  for (const tr of P.trades.slice(-30).reverse()) {
+    const when = new Date(tr.time * 1000);
+    ui.trades.append(el('div', { className: 'ibrow' },
+      el('div', {}, el('b', { className: tr.side === 'BUY' ? 'up' : 'down', textContent: `${t(tr.side === 'BUY' ? 'Buy' : 'Sell')} ${tr.sym}` }), el('small', { textContent: `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` })),
+      el('div', { className: 'r' }, el('span', { textContent: `${fmtQty(tr.qty)} @ ${fmtLast(tr.price)}` }), el('small', { className: cls(tr.pnl), textContent: tr.pnl == null ? '' : signed(tr.pnl) }))));
+  }
 }
 
 // ---------------------------------------------------------------- screener
@@ -1350,5 +1511,6 @@ else pullState().then(() => {
   load(); refreshWatch(); refreshIb(); requestAnimationFrame(frame);
   setInterval(() => { if (!document.hidden && state.view === 'chart') load({ refresh: true }); }, 30000);
   setInterval(() => { if (!document.hidden) refreshWatch(); }, 60000);
+  paperTick(); setInterval(() => { if (state.paper.orders.length || (side === 'paper' && !document.hidden)) paperTick(); }, 20000); // working orders are checked even in a background tab
 });
 })();

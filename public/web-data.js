@@ -11,7 +11,7 @@
 // A source that fails is skipped for two minutes, so the page switches over by itself.
 (() => {
 'use strict';
-const VERSION = '1.6.0'; // keep in step with server.js and package.json
+const VERSION = '1.7.0'; // keep in step with server.js and package.json
 const DOWNLOAD = 'https://github.com/RockAlter/Investerview/releases/latest';
 // Address of the deployed data proxy (see worker/README.md). Empty = not deployed yet: the page
 // then uses Tencent and AllOrigins only. For testing, ?proxy=http://localhost:8787 overrides it.
