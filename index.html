@@ -65,9 +65,11 @@
   <aside id="watch">
     <nav id="sideTabs" class="seg">
       <button data-side="watch" class="on" data-i18n>Watchlist</button>
-      <button data-side="pos"><span data-i18n>Positions</span><i id="ibDot" hidden></i></button>
+      <button data-side="pos" title="Your Interactive Brokers positions (read-only)" data-i18n-title><span>IBKR</span><i id="ibDot" hidden></i></button>
+      <button data-side="paper" title="Practice account with virtual money" data-i18n-title data-i18n>Paper</button>
     </nav>
     <div id="sidePos" hidden></div>
+    <div id="sidePaper" hidden></div>
     <div id="sideWatch">
     <div class="whead"><span data-i18n>Watchlist</span><span><button id="impWatch" title="Import a watchlist exported from another charting app" data-i18n-title data-i18n>Import</button> <button id="addSec" title="Add a section heading" data-i18n-title data-i18n>+ Section</button> <button id="addWatch" title="Add the charted symbol" data-i18n-title data-i18n>+ Add</button></span></div>
     <ul id="wlist"></ul>
