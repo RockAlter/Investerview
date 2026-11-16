@@ -61,13 +61,25 @@ input:focus, select:focus, button:focus-visible { outline: 1px solid var(--accen
 #results li b { min-width: 76px; }
 #results li .n { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 #results li .x { color: var(--muted); font-size: 11px; }
-#indMenu { min-width: 210px; }
+#indMenu { min-width: 230px; max-height: calc(100vh - 80px); overflow-y: auto; }
+#indMenu li.head { cursor: default; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 8px 8px 3px; }
+#indMenu li.head:hover { background: none; }
+#fly {
+  position: absolute; left: 44px; z-index: 50; margin: 0; padding: 4px; list-style: none;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+:root[data-theme=light] #fly { box-shadow: 0 10px 30px rgba(20,30,50,.18); }
+#fly li { padding: 6px 10px 6px 8px; border-radius: 5px; cursor: pointer; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+#fly li:hover { background: var(--hover); }
+#fly li.on { color: var(--accent); }
 
 /* chart view */
 main { min-height: 0; }
 #chartView { display: grid; grid-template-columns: 44px 1fr 330px; }
 #tools { background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
-#tools button { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; background: transparent; border-color: transparent; }
+#tools { position: relative; }
+#tools button { position: relative; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; background: transparent; border-color: transparent; }
+#tools button i { position: absolute; right: 2px; bottom: 2px; border: 3px solid transparent; border-right-color: currentColor; border-bottom-color: currentColor; opacity: .55; } /* marks a button that opens a list */
 #tools button:hover { background: var(--panel2); }
 #tools button.on { background: var(--accent); color: #fff; }
 #tools svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
