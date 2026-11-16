@@ -141,7 +141,12 @@ body { grid-template-columns: minmax(0, 1fr); }
 
 #msg div { max-width: 520px; } #msg a { color: var(--accent); }
 #theme { padding: 5px 9px; }
-#ver { margin-top: auto; font-size: 10px; color: var(--muted); cursor: default; }
+#refresh { padding: 5px 9px; }
+#refresh.busy { opacity: .5; cursor: wait; }
+#updated { font-size: 11px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+#updated.err { color: var(--down); }
+#ver { margin-top: auto; font-size: 10px; color: var(--muted); text-decoration: none; }
+#ver:hover { color: var(--tag); text-decoration: underline; }
 
 /* side panel tabs + IBKR positions */
 #sideTabs { padding: 8px 10px 0; }

@@ -64,9 +64,23 @@ const T = {
     'Yahoo Finance に接続できません。インターネット接続、または VPN やファイアウォールによる遮断を確認してください。'],
   'Show connection diagnostics': ['查看连接诊断', '查看連線診斷', '接続診断を表示'],
   'Get the desktop app': ['下载桌面版', '下載桌面版', 'デスクトップ版を入手'],
-  'Web version: crypto only': ['网页版：仅加密货币', '網頁版：僅加密貨幣', 'ウェブ版：暗号資産のみ'],
-  'The web version shows crypto only (for example BTC-USD). Stocks, indices, FX and futures need the desktop app.': ['网页版只显示加密货币（例如 BTC-USD）。股票、指数、外汇和期货需要使用桌面版。', '網頁版只顯示加密貨幣（例如 BTC-USD）。股票、指數、外匯和期貨需要使用桌面版。', 'ウェブ版は暗号資産のみ表示します（例：BTC-USD）。株式・指数・為替・先物にはデスクトップ版が必要です。'],
-  'Stocks, indices, FX, futures, IBKR positions and the saved data file need the desktop app. Click to download it. Your watchlist here is kept in this browser only.': ['股票、指数、外汇、期货、IBKR 持仓和数据文件需要桌面版。点击下载。此处的自选列表只保存在当前浏览器中。', '股票、指數、外匯、期貨、IBKR 持倉和資料檔需要桌面版。點擊下載。此處的自選清單只儲存在目前的瀏覽器中。', '株式・指数・為替・先物・IBKR のポジション・データファイルにはデスクトップ版が必要です。クリックしてダウンロード。ここのウォッチリストはこのブラウザにのみ保存されます。'],
+  'release notes on GitHub': ['在 GitHub 上查看发布说明', '在 GitHub 上查看發行說明', 'GitHub のリリースノート'],
+  'Refresh prices now. They also update by themselves: the chart every 30 seconds, the watchlist every minute.': ['立即刷新价格。价格也会自动更新：图表每 30 秒一次，自选列表每分钟一次。', '立即重新整理價格。價格也會自動更新：圖表每 30 秒一次，自選清單每分鐘一次。', '今すぐ価格を更新します。価格は自動でも更新されます（チャートは 30 秒ごと、ウォッチリストは 1 分ごと）。'],
+  'Prices updated at {0}': ['价格更新于 {0}', '價格更新於 {0}', '価格の更新時刻 {0}'],
+  'Refresh failed: {0}': ['刷新失败：{0}', '重新整理失敗：{0}', '更新に失敗しました：{0}'],
+  'Web version': ['网页版', '網頁版', 'ウェブ版'],
+  'Prices can be delayed, and intraday, FX and futures charts depend on the data proxy being reachable. IBKR positions and the saved data file need the desktop app: click to download it. Your watchlist here is kept in this browser only.': [
+    '价格可能有延迟；分时、外汇和期货图表需要能连上数据代理。IBKR 持仓和数据文件需要桌面版：点击下载。此处的自选列表只保存在当前浏览器中。',
+    '價格可能有延遲；分時、外匯和期貨圖表需要能連上資料代理。IBKR 持倉和資料檔需要桌面版：點擊下載。此處的自選清單只儲存在目前的瀏覽器中。',
+    '価格は遅延することがあります。分足・為替・先物のチャートはデータプロキシに接続できる場合のみ表示されます。IBKR のポジションとデータファイルにはデスクトップ版が必要です（クリックしてダウンロード）。ここのウォッチリストはこのブラウザにのみ保存されます。'],
+  'Intraday data for {0} is not available right now. Daily, weekly and monthly charts may still work.': [
+    '{0} 的分时数据暂时无法获取。日线、周线和月线图表可能仍可使用。',
+    '{0} 的分時資料暫時無法取得。日線、週線和月線圖表可能仍可使用。',
+    '{0} の分足データは現在取得できません。日足・週足・月足は表示できる場合があります。'],
+  'No data source is reachable right now for {0}. Check your connection and try again in a minute.': [
+    '目前无法从任何数据源获取 {0}。请检查网络连接，稍后再试。',
+    '目前無法從任何資料來源取得 {0}。請檢查網路連線，稍後再試。',
+    '現在 {0} のデータをどのデータソースからも取得できません。接続を確認して、少し待ってから再試行してください。'],
   'Backup data: {0}':['备用数据源：{0}', '備用資料來源：{0}', '予備データ：{0}'],
   'Yahoo Finance is not available from this network, so prices come from a backup source. Extended hours and symbol search need Yahoo.': ['当前网络无法访问 Yahoo Finance，价格来自备用数据源。盘前盘后数据和代码搜索需要 Yahoo。', '目前網路無法存取 Yahoo Finance，價格來自備用資料來源。盤前盤後資料和代號搜尋需要 Yahoo。', 'このネットワークでは Yahoo Finance を利用できないため、価格は予備のデータソースから取得しています。時間外取引と銘柄検索には Yahoo が必要です。'],
   'Could not load the charting library (needs an internet connection). Reload to retry.': [

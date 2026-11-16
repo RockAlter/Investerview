@@ -28,9 +28,15 @@ function cached(key, ttlMs, fn) {
   if (hit && hit.exp > now) return hit.p;
   if (cache.size > 800) for (const [k, v] of cache) if (v.exp <= now) cache.delete(k);
   const p = fn();
-  cache.set(key, { exp: now + ttlMs, p });
+  cache.set(key, { exp: now + ttlMs, p, at: now });
   p.catch(() => cache.delete(key));
   return p;
+}
+// refresh button: forget these symbols' cached Yahoo bars so the next request fetches new ones. Entries younger than
+// 5 s are kept (repeated clicks cost nothing), and so are backup-source entries (no `at`), which are asked less often on purpose.
+function freshen(symbols) {
+  const now = Date.now(), want = new Set(symbols);
+  for (const [k, v] of cache) if (k.startsWith('c|') && v.at && now - v.at > 5000 && want.has(k.split('|')[1])) cache.delete(k);
 }
 
 // Yahoo refuses some requests (HTTP 401/403/429) depending on the network they come from.
@@ -100,8 +106,7 @@ async function yahoo(pathname) {
 
 // ---- backup data sources --------------------------------------------------
 // Used only when Yahoo refuses or cannot be reached. All are public endpoints that need no key:
-// Binance and Coinbase (crypto), Eastmoney (US, Hong Kong and mainland China stocks, indices, FX,
-// futures) and Nasdaq (US stocks and ETFs, daily). Each returns bars in the shape candles() uses,
+// Binance and Coinbase (crypto) and Nasdaq (US stocks and ETFs: daily, weekly, monthly). Each returns bars in the shape candles() uses,
 // or null when it does not cover the symbol.
 const RANGE_DAYS = { '1d': 1, '5d': 5, '1mo': 31, '3mo': 92, '6mo': 183, '1y': 366, '2y': 731, '5y': 1827, '10y': 3653 };
 const STEP = { '1m': 60, '5m': 300, '15m': 900, '60m': 3600 };
@@ -109,19 +114,6 @@ async function getJson(url, headers) {
   const r = await fetch(url, { headers: { ...HEADERS, ...headers }, signal: AbortSignal.timeout(12000) });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
-}
-// seconds east of UTC for a time zone at a given moment (handles daylight saving)
-const tzFmt = new Map(), tzMemo = new Map();
-function tzOffset(tz, sec) {
-  const key = tz + '|' + Math.floor(sec / 3600);
-  if (tzMemo.has(key)) return tzMemo.get(key);
-  if (!tzFmt.has(tz)) tzFmt.set(tz, new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }));
-  const p = {};
-  for (const x of tzFmt.get(tz).formatToParts(new Date(sec * 1000))) p[x.type] = +x.value;
-  const off = Math.round(Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) / 1000 - sec);
-  if (tzMemo.size > 5000) tzMemo.clear();
-  tzMemo.set(key, off);
-  return off;
 }
 // weekly bars are stamped with their Monday and monthly bars with the 1st, as Yahoo does, so drawings line up whichever source is in use
 const weekStart = (t) => t - ((new Date(t * 1000).getUTCDay() + 6) % 7) * 86400;
@@ -164,73 +156,7 @@ async function coinbase(symbol, interval) {
   return { type: 'CRYPTOCURRENCY', currency: 'USD', exchange: 'Coinbase', bars: STEP[interval] ? bars : regroup(bars, interval) };
 }
 
-const NY = 'America/New_York';
-const EM_INDEX = {
-  '^GSPC': ['100.SPX', NY], '^DJI': ['100.DJIA', NY], '^IXIC': ['100.NDX', NY], '^NDX': ['100.NDX100', NY], 'DX-Y.NYB': ['100.UDI', NY],
-  '^N225': ['100.N225', 'Asia/Tokyo'], '^HSI': ['100.HSI', 'Asia/Hong_Kong'], '000001.SS': ['1.000001', 'Asia/Shanghai'],
-  '^FTSE': ['100.FTSE', 'Europe/London'], '^GDAXI': ['100.GDAXI', 'Europe/Berlin'], '^FCHI': ['100.FCHI', 'Europe/Paris'],
-  '^KS11': ['100.KS11', 'Asia/Seoul'], '^STI': ['100.STI', 'Asia/Singapore'], '^TWII': ['100.TWII', 'Asia/Taipei'], '^BSESN': ['100.SENSEX', 'Asia/Kolkata'],
-};
-const EM_FUT = { 'ES=F': '103.ES00Y', 'NQ=F': '103.NQ00Y', 'YM=F': '103.YM00Y', 'GC=F': '101.GC00Y', 'SI=F': '101.SI00Y', 'HG=F': '101.HG00Y', 'CL=F': '102.CL00Y', 'NG=F': '102.NG00Y', 'BZ=F': '112.B00Y' };
 const US_RE = /^[A-Z]{1,5}(-[A-Z]{1,2})?$/;
-// Yahoo symbol -> Eastmoney ids to try, plus what we know about the instrument
-function emPlan(symbol) {
-  let m;
-  if (EM_INDEX[symbol]) return { ids: [EM_INDEX[symbol][0]], tz: EM_INDEX[symbol][1], type: 'INDEX', currency: '' };
-  if (EM_FUT[symbol]) return { ids: [EM_FUT[symbol]], tz: NY, type: 'FUTURE', currency: 'USD' };
-  if ((m = /^([A-Z]{3})?([A-Z]{3})=X$/.exec(symbol))) return { ids: ['119.' + (m[1] || 'USD') + m[2], '133.' + (m[1] || 'USD') + m[2]], tz: 'Europe/London', type: 'CURRENCY', currency: m[2] };
-  if ((m = /^(\d{1,5})\.HK$/.exec(symbol))) return { ids: ['116.' + m[1].padStart(5, '0')], tz: 'Asia/Hong_Kong', type: 'EQUITY', currency: 'HKD' };
-  if ((m = /^(\d{6})\.(SS|SZ)$/.exec(symbol))) return { ids: [(m[2] === 'SS' ? '1.' : '0.') + m[1]], tz: 'Asia/Shanghai', type: 'EQUITY', currency: 'CNY', lot: 100 };
-  if (US_RE.test(symbol)) { const c = symbol.replace('-', '_'); return { ids: ['105.' + c, '106.' + c, '107.' + c], tz: NY, type: 'EQUITY', currency: 'USD' }; } // Nasdaq, NYSE, NYSE Arca/American
-  return null;
-}
-const EM_KLT = { '1m': 1, '5m': 5, '15m': 15, '60m': 60, '1d': 101, '1wk': 102, '1mo': 103 };
-const emFound = new Map(); // symbol -> the id that worked
-// Eastmoney cuts off an address that sends bursts of requests, so they go one at a time with a
-// pause between, and after any failure it is left alone for two minutes.
-let emQueue = Promise.resolve(), emPausedUntil = 0;
-function emGet(url) {
-  const run = async () => {
-    if (Date.now() < emPausedUntil) throw new Error('paused after a failed request');
-    try { return await getJson(url, { Referer: 'https://quote.eastmoney.com/' }); }
-    catch (e) { emPausedUntil = Date.now() + 120000; throw e; }
-    finally { await new Promise((r) => setTimeout(r, 300)); }
-  };
-  if (Date.now() < emPausedUntil) return Promise.reject(new Error('paused after a failed request'));
-  const p = emQueue.then(run);
-  emQueue = p.catch(() => {});
-  return p;
-}
-async function eastmoney(symbol, interval) {
-  const plan = emPlan(symbol);
-  if (!plan) return null;
-  const klt = EM_KLT[interval], step = STEP[interval];
-  let data = null;
-  for (const id of emFound.has(symbol) ? [emFound.get(symbol)] : plan.ids) {
-    const j = await emGet(`https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${id}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56&klt=${klt}&fqt=1&end=20500101&lmt=${step ? 1500 : 2700}`);
-    if (j && j.data && Array.isArray(j.data.klines) && j.data.klines.length) { data = j.data; emFound.set(symbol, id); break; }
-  }
-  if (!data) return null;
-  let bars = [], prevEnd = 0;
-  for (const line of data.klines) { // "date[ time],open,close,high,low,volume"
-    const [d, o, c, h, l, v] = line.split(',');
-    const bar = { time: 0, open: +o, high: +h, low: +l, close: +c, volume: (+v || 0) * (plan.lot || 1) };
-    if (!(bar.low > 0) || !(bar.high > 0)) { bars = []; continue; } // dividend adjustment pushes very old prices below zero: drop those and everything earlier
-    if (step) {
-      const end = Date.parse(d.replace(' ', 'T') + ':00+08:00') / 1000; // stamped with the bar's end, in Beijing time
-      if (!isFinite(end)) continue;
-      const start = Math.max(prevEnd, end - step);
-      prevEnd = end;
-      bar.time = start + tzOffset(plan.tz, start); // exchange-local, like the Yahoo bars
-    } else {
-      const day = Date.parse(d + 'T00:00:00Z') / 1000;
-      if (!isFinite(day)) continue;
-      bar.time = interval === '1wk' ? weekStart(day) : interval === '1mo' ? monthStart(day) : day;
-    }
-    bars.push(bar);
-  }
-  return { type: plan.type, currency: plan.currency, exchange: '', bars };
-}
 async function nasdaq(symbol, interval, days) {
   if (STEP[interval] || !US_RE.test(symbol)) return null;
   const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
@@ -250,7 +176,7 @@ async function nasdaq(symbol, interval, days) {
   }
   return null;
 }
-const BACKUPS = [['Binance', binance], ['Coinbase', coinbase], ['Nasdaq', nasdaq], ['Eastmoney', eastmoney]];
+const BACKUPS = [['Binance', binance], ['Coinbase', coinbase], ['Nasdaq', nasdaq]];
 async function backupCandles(symbol, interval, range) {
   const days = RANGE_DAYS[range] || 0;
   for (const [source, fn] of BACKUPS) {
@@ -458,11 +384,13 @@ async function handleApi(url, req, res) {
     const symbol = cleanSymbol(p.get('symbol'));
     const interval = p.get('interval'), range = p.get('range');
     if (!symbol || !INTERVALS.has(interval) || !RANGES.has(range)) return send(res, 400, { error: 'Invalid symbol, interval or range' });
+    if (p.get('fresh') === '1') freshen([symbol]);
     return send(res, 200, await candles(symbol, interval, range, p.get('ext') === '1'));
   }
   if (url.pathname === '/api/screen') {
     const symbols = [...new Set((p.get('symbols') || '').split(',').map(cleanSymbol).filter(Boolean))].slice(0, 120);
     if (!symbols.length) return send(res, 200, { rows: [], errors: [] });
+    if (p.get('fresh') === '1') freshen(symbols);
     return send(res, 200, await screen(symbols, p.get('ext') === '1'));
   }
   if (url.pathname === '/api/search') {
@@ -618,7 +546,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.5.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '1.5.1'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',

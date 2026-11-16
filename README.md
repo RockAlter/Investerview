@@ -5,7 +5,7 @@
 A trading screening app: local charting and stock screening in the browser (the UI calls itself **ChartDesk**). It runs on your own machine, needs no account or API key, and has no dependencies beyond Node.js.
 
 - **Desktop app (everything):** download `Investerview.exe` from the [latest release](https://github.com/RockAlter/Investerview/releases/latest), or run it from source as described below.
-- **Web version (crypto only):** <https://rockalter.github.io/Investerview/> — nothing to install, but limited. See [Web version and its limits](#web-version-and-its-limits).
+- **Web version:** <https://rockalter.github.io/Investerview/> — nothing to install; stocks, ETFs, indices and crypto, with a few limits. See [Web version and its limits](#web-version-and-its-limits).
 
 ## Features
 
@@ -22,17 +22,25 @@ A trading screening app: local charting and stock screening in the browser (the 
 
 ## Web version and its limits
 
-<https://rockalter.github.io/Investerview/> is the same interface published on GitHub Pages. It opens in any browser with nothing to install, but it **shows crypto only**.
+<https://rockalter.github.io/Investerview/> is the same interface published on GitHub Pages. It opens in any browser with nothing to install.
 
-**Why.** Browsers do not let a web page read data from another website unless that website explicitly allows it (the CORS rule). Among free price sources, only the crypto exchanges allow it; Yahoo Finance and the other stock sources do not. The desktop app is not a web page, so it can fetch from them and hand the data to the page on your own computer. GitHub Pages can only serve files and cannot run that program.
+**Where its prices come from.** Browsers do not let a web page read data from another website unless that website explicitly allows it (the CORS rule). Yahoo Finance, Nasdaq and most stock sources do not allow it, so the web version uses several sources and switches between them by itself. A source that fails is skipped for two minutes and the next one is tried:
+
+| Order | Source | Covers |
+|---|---|---|
+| Crypto | Binance, then Coinbase (straight from the browser) | Crypto priced in USD, all timeframes |
+| 1 | **Investerview data proxy** — a small Cloudflare Worker ([`worker/`](worker/README.md)) that asks Yahoo Finance, then Nasdaq, then Tencent on the page's behalf | Everything the desktop app shows, including intraday, FX, futures and symbol search |
+| 2 | Tencent Finance (straight from the browser) | US stocks and ETFs, S&P 500 / Dow / Nasdaq / Hang Seng, Hong Kong and China A-shares; daily, weekly, monthly |
+| 3 | Yahoo Finance through the public AllOrigins proxy | Everything, but slow and often unavailable |
+
+The source in use is shown in the legend line above the chart.
 
 | | Web version | Desktop app |
 |---|---|---|
-| Crypto (`BTC-USD`, `ETH-USD`, …) | Yes, from Binance or Coinbase | Yes |
-| Stocks, ETFs, indices, FX, futures | **No** | Yes |
+| Stocks, ETFs, indices, crypto (daily, weekly, monthly) | Yes | Yes |
+| Intraday charts (1m–1h), FX, futures, symbol search | Yes while the data proxy (or AllOrigins) is reachable; crypto intraday always | Yes |
 | Extended-hours prices | No | Yes |
-| Symbol search | About 40 well-known coins; any other works when typed in full, e.g. `WIF-USD` | Everything Yahoo lists |
-| Screener | Crypto, your watchlist, or a custom list of coins | All built-in lists |
+| Screener | All built-in lists | All built-in lists |
 | Watchlist import | No | Yes |
 | IBKR positions and orders | No | Yes |
 | MCP server for AI apps | No | Yes |
@@ -41,10 +49,8 @@ A trading screening app: local charting and stock screening in the browser (the 
 
 Other things to know about the web version:
 
-- Crypto prices come from a single exchange (Binance; Coinbase if Binance cannot be reached), so they can differ slightly from the desktop app, which uses Yahoo.
-- Binance is not reachable from some countries. Coinbase then takes over, with less history (300 bars per chart).
-- Typing a stock symbol shows a message with a link to the desktop app.
-- The web version is the `public/` folder published to the `gh-pages` branch; `public/web-data.js` is its data layer.
+- Prices from the backup sources can differ slightly from Yahoo's (crypto comes from one exchange; adjustments for dividends differ), and backup sources show the ticker instead of the company name.
+- The web version is the `public/` folder published to the `gh-pages` branch; `public/web-data.js` is its data layer, and `PROXY_URL` at its top is the data proxy's address.
 
 ## Run it
 
@@ -167,9 +173,10 @@ When Yahoo refuses or cannot be reached, the desktop app switches to other publi
 |---|---|---|
 | Binance, then Coinbase | Crypto priced in USD (`BTC-USD`) | All |
 | Nasdaq | US stocks and ETFs | Daily, weekly, monthly (10 years) |
-| Eastmoney (experimental) | US, Hong Kong and mainland China stocks; major indices; FX; the main futures | All, with about 3 weeks of intraday history |
 
-Limits while on backup data: no extended-hours prices, no symbol search (type the ticker itself), no company names, and no data for Tokyo, European and most other non-US exchanges or for `^VIX`. Prices can differ slightly from Yahoo's (crypto comes from one exchange; adjustments for dividends differ). Eastmoney cuts off addresses that send many requests quickly, so the app calls it one request at a time and leaves it alone for two minutes after a failure; a long watchlist of indices and futures fills in slowly. It has been tested against recorded data only, not live.
+Limits while on backup data: US stocks have no intraday charts (1m–1h); there is no data at all for stocks outside the US, indices, FX or futures; and there are no extended-hours prices, no symbol search (type the ticker itself) and no company names. Prices can differ slightly from Yahoo's (crypto comes from one exchange; adjustments for dividends differ).
+
+Version 1.5.0 also had an experimental Eastmoney source for indices, FX, futures and intraday bars. It was removed in 1.5.1: Eastmoney blocked an address for more than three hours after a short burst of requests, which makes it unusable as a backup.
 
 The app connects to Yahoo directly. It does not use a proxy configured only in your browser or in Windows settings; a VPN in full-tunnel (TUN) mode does apply.
 
@@ -181,7 +188,8 @@ build-exe.js         builds dist/Investerview.exe
 public/index.html    page markup
 public/app.js        charts, indicators, drawings, watchlist, screener
 public/i18n.js       interface translations
-public/web-data.js   data layer of the web version (crypto, fetched in the browser)
+public/web-data.js   data layer of the web version: picks and switches between price sources
 public/style.css     styles
 start.bat            Windows launcher
+worker/              data proxy for the web version (Cloudflare Worker), see worker/README.md
 ```

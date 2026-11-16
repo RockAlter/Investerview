@@ -20,7 +20,8 @@ const store = {
 const SYNCED = new Set(['watch', 'drawings', 'collapsed', 'indicators']);
 let syncReady = false, pushTimer = 0;
 // Web version (opened from a website such as GitHub Pages, not from the desktop app): there is no
-// local server, so web-data.js fetches prices in the browser. That covers crypto only.
+// local server, so web-data.js fetches prices in the browser, through the data proxy (worker/) and
+// the other sources it switches between. IBKR positions and the saved data file need the desktop app.
 const WEB = !!window.WebData && (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || new URLSearchParams(location.search).has('web'));
 function pushState() {
   if (!syncReady || WEB) return;
@@ -69,11 +70,10 @@ const IND = {
   RSI: { name: 'RSI', period: 14 },
   MACD: { name: 'MACD (12, 26, 9)' },
 };
-const DEFAULT_WATCH = WEB ? ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'AVAX-USD', 'LINK-USD', 'LTC-USD']
-  : ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD', 'EURUSD=X', 'GC=F'];
+const DEFAULT_WATCH = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META', 'SPY', 'QQQ', 'BTC-USD', 'ETH-USD', 'EURUSD=X', 'GC=F'];
 
 const state = {
-  symbol: store.get('symbol', WEB ? 'BTC-USD' : 'AAPL'),
+  symbol: store.get('symbol', 'AAPL'),
   tf: store.get('tf', '1D'),
   type: store.get('type', 'candles'),
   log: store.get('log', false),
@@ -295,7 +295,7 @@ function renderChips() {
 function updateLegend(i) {
   const d = state.data, b = d[i];
   $('#lgSym').textContent = state.symbol;
-  $('#lgName').textContent = [state.meta.name !== state.symbol && state.meta.name, state.meta.exchange, state.tf].filter(Boolean).join(' · ');
+  $('#lgName').textContent = [state.meta.name !== state.symbol && state.meta.name, state.meta.exchange || (WEB && state.meta.source), state.tf].filter(Boolean).join(' · ');
   const src = $('#lgSrc'), backup = state.meta.source && state.meta.source !== 'Yahoo Finance';
   src.hidden = !backup || WEB; // the web version names its source in the legend line instead
   if (backup) { src.textContent = t('Backup data: {0}', state.meta.source); src.title = t('Yahoo Finance is not available from this network, so prices come from a backup source. Extended hours and symbol search need Yahoo.'); }
@@ -325,13 +325,24 @@ function showMsg(text, withDiag) {
   m.append(box);
 }
 
-async function load({ refresh = false } = {}) {
+// time of the last successful chart load, next to the refresh button
+function markUpdated(err) {
+  const u = $('#updated');
+  u.classList.toggle('err', !!err);
+  if (err) { u.textContent = '!'; u.title = t('Refresh failed: {0}', err); return; }
+  const now = new Date().toLocaleTimeString();
+  u.textContent = now; u.title = t('Prices updated at {0}', now);
+}
+
+// refresh: update the chart in place (no "Loading" message); fresh: ask the server to skip its short cache (refresh button)
+async function load({ refresh = false, fresh = false } = {}) {
   const seq = ++loadSeq;
   const [interval, range] = TF[state.tf];
   if (!refresh) showMsg(t('Loading {0}…', state.symbol));
   try {
-    const j = await api(`/api/candles?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&range=${range}${state.ext ? '&ext=1' : ''}`);
+    const j = await api(`/api/candles?symbol=${encodeURIComponent(state.symbol)}&interval=${interval}&range=${range}${state.ext ? '&ext=1' : ''}${fresh ? '&fresh=1' : ''}`);
     if (seq !== loadSeq) return;
+    markUpdated();
     if (!j.bars.length) throw new Error(t('No data for {0} on this timeframe', state.symbol));
     state.data = j.bars; state.meta = j;
     state.extRuns = []; // [firstIndex, lastIndex] of each stretch of pre-market / after-hours bars
@@ -344,10 +355,9 @@ async function load({ refresh = false } = {}) {
     document.title = `${state.symbol} ${fmtP(j.price)} · ChartDesk`;
   } catch (e) {
     if (seq !== loadSeq) return;
-    if (refresh) return;
+    if (refresh) { markUpdated(e.message); return; } // keep the chart on screen
     const refused = /returned (401|403|429)/.exec(e.message), unreachable = /Could not reach/.test(e.message);
-    if (e.message === 'WEB_ONLY') showMsg(t('The web version shows crypto only (for example BTC-USD). Stocks, indices, FX and futures need the desktop app.'), 'download');
-    else if (refused) showMsg(t('Yahoo Finance refused the request from this network (HTTP {0}). Try switching your VPN or proxy on or off, or wait a few minutes and reload.', refused[1]), true);
+    if (refused) showMsg(t('Yahoo Finance refused the request from this network (HTTP {0}). Try switching your VPN or proxy on or off, or wait a few minutes and reload.', refused[1]), true);
     else if (unreachable) showMsg(t('Could not connect to Yahoo Finance. Check your internet connection, or whether a VPN or firewall is blocking it.'), true);
     else showMsg(e.message + t(' — try another symbol or timeframe.'));
   }
@@ -389,6 +399,12 @@ sysLight.addEventListener('change', () => { if (!theme) applyTheme(true); });
 applyTheme(false);
 $('#ext').checked = state.ext;
 $('#ext').addEventListener('change', (e) => { state.ext = e.target.checked; store.set('ext', state.ext); load(); refreshWatch(); });
+$('#refresh').addEventListener('click', async (e) => {
+  const b = e.currentTarget;
+  if (b.classList.contains('busy')) return;
+  b.classList.add('busy');
+  try { await Promise.all([state.view === 'chart' ? load({ refresh: true, fresh: true }) : null, refreshWatch(true)]); } finally { b.classList.remove('busy'); }
+});
 $('#log').addEventListener('change', (e) => { state.log = e.target.checked; store.set('log', state.log); if (chart) chart.priceScale('right').applyOptions({ mode: state.log ? 1 : 0 }); });
 
 const indMenu = $('#indMenu');
@@ -467,13 +483,17 @@ toolsEl.append(el('hr'));
 const delBtn = el('button', { title: t('Delete selected drawing, or all drawings on this symbol if none is selected (Del)'), innerHTML: svg('<path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/>') });
 delBtn.addEventListener('click', () => removeDrawings());
 toolsEl.append(delBtn);
-// version of the running app, always visible at the bottom of the toolbar
-const verEl = el('span', { id: 'ver' }); toolsEl.append(verEl);
-api('/api/version').then((v) => { verEl.textContent = 'v' + v.version; verEl.title = 'Investerview ' + v.version + (WEB ? ' (web)' : ''); }).catch(() => {});
+// version of the running app, always visible at the bottom of the toolbar; links to that version's GitHub release
+const RELEASES = 'https://github.com/RockAlter/Investerview/releases';
+const verEl = el('a', { id: 'ver', href: RELEASES, target: '_blank', rel: 'noopener' }); toolsEl.append(verEl);
+api('/api/version').then((v) => {
+  verEl.textContent = 'v' + v.version; verEl.href = RELEASES + '/tag/v' + v.version;
+  verEl.title = 'Investerview ' + v.version + (WEB ? ' (web)' : '') + ' – ' + t('release notes on GitHub');
+}).catch(() => {});
 if (WEB) { // no local server: hide what needs one, and say so
   $('#sideTabs').hidden = true; $('#ext').closest('label').hidden = true; $('#impWatch').hidden = true;
   const note = $('#webNote'); note.hidden = false; note.href = window.WebData.DOWNLOAD;
-  note.textContent = t('Web version: crypto only'); note.title = t('Stocks, indices, FX, futures, IBKR positions and the saved data file need the desktop app. Click to download it. Your watchlist here is kept in this browser only.');
+  note.textContent = t('Web version'); note.title = t('Prices can be delayed, and intraday, FX and futures charts depend on the data proxy being reachable. IBKR positions and the saved data file need the desktop app: click to download it. Your watchlist here is kept in this browser only.');
 }
 
 function setTool(id) {
@@ -700,10 +720,10 @@ function renderWatch() {
     ul.append(li);
   });
 }
-async function refreshWatch() {
+async function refreshWatch(fresh = false) {
   const syms = watchSymbols();
   if (syms.length) {
-    try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',') + (state.ext ? '&ext=1' : '')); if (!state.ext) watchData.clear(); for (const r of j.rows) watchData.set(r.symbol, r); } catch { /* keep stale values */ }
+    try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',') + (state.ext ? '&ext=1' : '') + (fresh === true ? '&fresh=1' : '')); if (!state.ext) watchData.clear(); for (const r of j.rows) watchData.set(r.symbol, r); } catch { /* keep stale values */ }
   }
   renderWatch();
 }
@@ -869,10 +889,9 @@ const COLS = [
 ];
 let rows = [], scanErrors = [], sort = { key: 'chg', dir: -1 }, scanSeq = 0;
 const uniSel = $('#uni'), presetSel = $('#preset'), customInp = $('#uniCustom');
-if (WEB) for (const k of Object.keys(UNIVERSES)) if (UNIVERSES[k] && k !== 'Crypto') delete UNIVERSES[k]; // the rest need the desktop app
 for (const k of Object.keys(UNIVERSES)) uniSel.append(el('option', { textContent: t(k), value: k }));
 for (const k of Object.keys(PRESETS)) presetSel.append(el('option', { textContent: t(k), value: k }));
-uniSel.value = store.get('universe', WEB ? 'Crypto' : 'US large caps'); if (!uniSel.value) uniSel.selectedIndex = 0;
+uniSel.value = store.get('universe', 'US large caps'); if (!uniSel.value) uniSel.selectedIndex = 0;
 customInp.value = store.get('custom', '');
 const fInputs = [...document.querySelectorAll('#filters [data-f]')];
 

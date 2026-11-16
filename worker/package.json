@@ -1,0 +1,10 @@
+{
+  "name": "investerview-data",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker that gives the Investerview web version stock data",
+  "scripts": {
+    "dev": "node dev-server.mjs",
+    "deploy": "npx wrangler deploy"
+  }
+}

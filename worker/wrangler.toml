@@ -1,0 +1,8 @@
+# Cloudflare Worker that gives the web version stock data. Deploy steps: worker/README.md
+name = "investerview-data"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Websites allowed to use this Worker, comma-separated. Localhost is always allowed, for testing.
+ALLOWED_ORIGINS = "https://rockalter.github.io"
