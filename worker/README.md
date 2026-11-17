@@ -17,6 +17,8 @@ If the Worker itself is down, the page falls back to Tencent and AllOrigins dire
 | `/candles` | `/candles?symbol=AAPL&interval=1d&range=1y` (add `&ext=1` for pre/after-market bars) |
 | `/search` | `/search?q=apple` |
 | `/health` | which upstream sources work from the Worker right now |
+| `/hit` | called once by the web page per visit; adds one to the day's anonymous totals (needs the `VISITS` KV namespace in `wrangler.toml`) |
+| `/stats?key=…` | the owner's page with the daily totals; the key is the `STATS_KEY` secret (`npx wrangler secret put STATS_KEY`) |
 
 Answers are cached at Cloudflare's edge for 30 seconds (intraday) to 5 minutes, so many viewers cost few
 upstream calls. Only the websites in `ALLOWED_ORIGINS` (`wrangler.toml`) and `localhost` may use it.

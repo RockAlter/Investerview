@@ -422,7 +422,8 @@ function cleanPaper(p) {
   const rows = (a) => (Array.isArray(a) ? a : []).filter((o) => o && SYMBOL_RE.test(o.sym) && side(o.side) && isNum(o.qty) && o.qty > 0 && isNum(o.price) && ['MKT', 'LMT', 'STP'].includes(o.type));
   const orders = rows(p.orders).filter((o) => o.type !== 'MKT').slice(0, 100).map((o) => ({ id: isNum(o.id) ? o.id : 0, sym: o.sym, side: o.side, qty: o.qty, type: o.type, price: o.price, time: isNum(o.time) ? o.time : 0 }));
   const trades = rows(p.trades).slice(-300).map((o) => ({ time: isNum(o.time) ? o.time : 0, sym: o.sym, side: o.side, qty: o.qty, price: o.price, type: o.type, pnl: isNum(o.pnl) ? o.pnl : null }));
-  return { start: p.start, cash: p.cash, realized: isNum(p.realized) ? p.realized : 0, pos, orders, trades };
+  const eq = (Array.isArray(p.eq) ? p.eq : []).filter((x) => Array.isArray(x) && isNum(x[0]) && isNum(x[1])).slice(-2000).map((x) => [x[0], x[1]]); // account value over time
+  return { start: p.start, cash: p.cash, realized: isNum(p.realized) ? p.realized : 0, pos, orders, trades, eq };
 }
 function cleanState(s) {
   if (!s || typeof s !== 'object') throw new Error('Invalid data');
@@ -566,7 +567,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.9.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '1.10.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',

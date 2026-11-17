@@ -6,3 +6,8 @@ compatibility_date = "2025-01-01"
 [vars]
 # Websites allowed to use this Worker, comma-separated. Localhost is always allowed, for testing.
 ALLOWED_ORIGINS = "https://rockalter.github.io"
+
+# Anonymous visit counter for the web page (daily totals; see hit() in worker.js).
+[[kv_namespaces]]
+binding = "VISITS"
+id = "9abf2e53cdf94a3fb5f3102c8ad67972"

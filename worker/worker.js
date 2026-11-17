@@ -253,6 +253,47 @@ function reply(body, status, origin, maxAge = 0) {
   return new Response(JSON.stringify(body), { status, headers });
 }
 
+// ---- visit counter -------------------------------------------------------
+// Anonymous daily totals for the web page, kept in a KV namespace bound as VISITS (see wrangler.toml).
+// Stored per day: visits, visitors (first visit of the day from a browser), new visitors (first visit ever
+// from a browser) and a count per country. No IP address, cookie or identifier is stored.
+async function hit(request, env, url, origin) {
+  const local = !origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin); // testing is not counted
+  if (env && env.VISITS && !local) {
+    try {
+      const key = 'd:' + new Date().toISOString().slice(0, 10);
+      const rec = (await env.VISITS.get(key, 'json')) || { visits: 0, visitors: 0, fresh: 0, countries: {} };
+      rec.visits++;
+      if (url.searchParams.get('day') === '1') rec.visitors++;
+      if (url.searchParams.get('new') === '1') rec.fresh++;
+      const cc = (request.cf && request.cf.country) || 'XX';
+      if (/^[A-Z0-9]{2}$/.test(cc)) rec.countries[cc] = (rec.countries[cc] || 0) + 1;
+      await env.VISITS.put(key, JSON.stringify(rec), { expirationTtl: 400 * 86400 });
+    } catch { /* over the free quota or KV unavailable: this visit is not counted */ }
+  }
+  return reply({ ok: true }, 200, origin);
+}
+// The owner's view of the counter: /stats?key=<STATS_KEY secret>  (add &format=json for the raw numbers)
+async function stats(env, url) {
+  const key = url.searchParams.get('key') || '';
+  const want = String((env && env.STATS_KEY) || '').replace(/[^\x21-\x7e]/g, ''); // a secret set from a shell pipe can carry a line break or byte-order mark
+  if (!env || !env.VISITS || want.length < 16 || key !== want) return reply({ error: 'Not found' }, 404, null);
+  const days = Math.min(400, Math.max(1, +url.searchParams.get('days') || 60));
+  const names = (await env.VISITS.list({ prefix: 'd:' })).keys.map((k) => k.name).sort().slice(-days);
+  const rows = (await Promise.all(names.map(async (n) => ({ day: n.slice(2), ...((await env.VISITS.get(n, 'json')) || {}) })))).reverse();
+  const sum = (f) => rows.reduce((s, r) => s + (r[f] || 0), 0);
+  const total = { visits: sum('visits'), visitors: sum('visitors'), fresh: sum('fresh') };
+  if (url.searchParams.get('format') === 'json') return reply({ days: rows.length, total, rows }, 200, null);
+  const top = (c) => Object.entries(c || {}).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => k + ' ' + v).join(', ');
+  const tr = (r, tag = 'td') => '<tr>' + [r.day, r.visits || 0, r.visitors || 0, r.fresh || 0, r.c || ''].map((v) => '<' + tag + '>' + v + '</' + tag + '>').join('') + '</tr>';
+  const html = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Investerview visits</title>'
+    + '<style>body{font:14px system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#222}table{border-collapse:collapse;width:100%}td,th{padding:6px 10px;border-bottom:1px solid #ddd;text-align:right}td:first-child,th:first-child,td:last-child,th:last-child{text-align:left}p{color:#666}</style>'
+    + '<h2>Investerview web version: visits</h2><p>Last ' + rows.length + ' days with visits. Days are in UTC. Visitors = browsers on their first visit that day; New = browsers on their first visit ever.</p><table>'
+    + tr({ day: 'Day', visits: 'Visits', visitors: 'Visitors', fresh: 'New', c: 'Countries' }, 'th')
+    + tr({ day: 'Total', ...total, c: '' }, 'th') + rows.map((r) => tr({ ...r, c: top(r.countries) })).join('') + '</table>';
+  return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
+}
+
 async function route(url) {
   const p = url.searchParams;
   if (url.pathname === '/candles') {
@@ -280,6 +321,8 @@ export default {
     if (originHdr && !origin) return reply({ error: 'This website may not use this data proxy' }, 403, null);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': origin || '*', 'Access-Control-Allow-Methods': 'GET', 'Access-Control-Max-Age': '86400' } });
     if (request.method !== 'GET') return reply({ error: 'GET only' }, 405, origin);
+    if (url.pathname === '/hit') return hit(request, env, url, origin);
+    if (url.pathname === '/stats') return stats(env, url);
     const edge = typeof caches !== 'undefined' && caches.default; // Cloudflare's edge cache (absent when testing in Node)
     const cacheKey = new Request(url.toString());
     if (edge && url.pathname !== '/health') {
