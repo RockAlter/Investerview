@@ -84,6 +84,7 @@ const IND = {
   WMA: { name: 'Weighted MA (WMA)', period: 20, calc: (d, c, p) => [wma(c, p)] },
   LSMA: { name: 'Linear regression line (LSMA)', period: 25, calc: (d, c, p) => [lsma(c, p)] },
   VWAP: { name: 'VWAP', calc: (d) => [vwap(d)] },
+  VPVR: { name: 'Volume profile (visible range)', vp: 1 }, // drawn by drawProfile, not a chart series
   DONCH: { name: 'Donchian Channel', period: 20, calc: (d, c, p) => donchian(d, p), lines: [{ w: 1 }, { w: 1, dash: 1 }, { w: 1 }] },
   KELT: { name: 'Keltner Channel', period: 20, calc: (d, c, p) => keltner(d, c, p), lines: [{ w: 1 }, { w: 1, dash: 1 }, { w: 1 }] },
   SUPERT: { name: 'Supertrend (10, 3)', calc: (d) => supertrend(d, 10, 3), lines: [{ c: 'up', gap: 1 }, { c: 'down', gap: 1 }] },
@@ -366,6 +367,7 @@ function makeIndicator(ind, color, nextPane) {
     const lo = chart.addSeries(LW.LineSeries, lineOpts(color, 1));
     return { ind, color, vals: [], apply(d, c) { const b = bollinger(c, ind.period); up.setData(toLine(d, b.up)); mid.setData(toLine(d, b.mid)); lo.setData(toLine(d, b.lo)); this.vals = [b.up, b.mid, b.lo]; } };
   }
+  if (IND[ind.type] && IND[ind.type].vp) return { ind, color, vals: [], vp: true, apply() {} };
   if (ind.type === 'VOL') {
     const s = chart.addSeries(LW.HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', priceLineVisible: false, lastValueVisible: false });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -610,7 +612,7 @@ function updateLegend(i) {
   if (b.x) box.append(el('span', { className: 'tag', textContent: t(b.time % 86400 < 43200 ? 'Pre-market' : 'After-hours') }));
   for (const c of S.cmp || []) if (c.valEl) c.valEl.textContent = c.vals[i] == null ? '–' : fmtLast(c.vals[i]);
   for (const it of S.inds) {
-    if (!it.valEl) continue;
+    if (!it.valEl || it.vp) continue;
     const shown = it.vals.map((a) => a[i] == null ? null : it.isVol ? fmtVol(a[i]) : it.big ? (a[i] < 0 ? '-' : '') + fmtVol(Math.abs(a[i])) : it.pane ? a[i].toFixed(2) : fmtP(a[i])).filter((x) => x != null);
     it.valEl.textContent = shown.length ? shown.join('  ') : '–';
   }
@@ -1242,9 +1244,52 @@ function frame() {
     const x1 = g.x0 + (a - 0.5) * g.sp, x2 = g.x0 + (b + 0.5) * g.sp;
     if (x2 > 0 && x1 < g.w) ctx.fillRect(x1, 0, x2 - x1, g.h);
   }
+  const vp = S.inds.find((it) => it.vp); if (vp) drawProfile(g, vp);
   for (const d of items) drawOne(d, g, false);
   if (draft) drawOne(draft, g, true);
   ctx.restore();
+}
+// Volume profile: how much volume traded at each price among the bars on screen, as bars growing from the right edge
+// (green = volume of rising bars, red = falling). Each bar's volume is spread evenly over its low-high range.
+// POC (point of control) is the price level with the most volume.
+let vpCache = { key: '' };
+function drawProfile(g, it) {
+  const r = chart.timeScale().getVisibleLogicalRange(); if (!r) return;
+  const D = state.data, i0 = Math.max(0, Math.ceil(r.from)), i1 = Math.min(D.length - 1, Math.floor(r.to));
+  if (i1 <= i0) return;
+  const key = [i0, i1, D.length, D[0].time, D[D.length - 1].close, D[D.length - 1].volume].join('|');
+  if (vpCache.key !== key) {
+    const N = 48, up = new Array(N).fill(0), dn = new Array(N).fill(0);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = i0; i <= i1; i++) { if (D[i].low < lo) lo = D[i].low; if (D[i].high > hi) hi = D[i].high; }
+    const step = (hi - lo) / N, bin = (p) => Math.max(0, Math.min(N - 1, Math.floor((p - lo) / step)));
+    let max = 0, poc = 0;
+    if (step > 0) {
+      for (let i = i0; i <= i1; i++) {
+        const b = D[i], v = b.volume || 0; if (!v) continue;
+        const a = bin(b.low), z = bin(b.high), share = v / (z - a + 1), into = b.close >= b.open ? up : dn;
+        for (let k = a; k <= z; k++) into[k] += share;
+      }
+      for (let k = 0; k < N; k++) if (up[k] + dn[k] > max) { max = up[k] + dn[k]; poc = k; }
+    }
+    vpCache = { key, N, lo, step, up, dn, max, poc };
+  }
+  const c = vpCache;
+  if (!c.max) { if (it.valEl) it.valEl.textContent = t('no volume data'); return; }
+  const W = Math.min(280, g.w * 0.3), upC = rgba(C.up, 0.3), dnC = rgba(C.down, 0.3);
+  for (let k = 0; k < c.N; k++) {
+    const y1 = S.main.priceToCoordinate(c.lo + k * c.step), y2 = S.main.priceToCoordinate(c.lo + (k + 1) * c.step);
+    if (y1 == null || y2 == null) continue;
+    const top = Math.min(y1, y2), hgt = Math.max(1, Math.abs(y1 - y2) - 1), wu = c.up[k] / c.max * W, wd = c.dn[k] / c.max * W;
+    ctx.fillStyle = upC; ctx.fillRect(g.w - wu - wd, top, wu, hgt);
+    ctx.fillStyle = dnC; ctx.fillRect(g.w - wd, top, wd, hgt);
+  }
+  const pocPrice = c.lo + (c.poc + 0.5) * c.step, y = S.main.priceToCoordinate(pocPrice);
+  if (y != null) {
+    ctx.save(); ctx.strokeStyle = it.color; ctx.lineWidth = 1; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(g.w, y); ctx.stroke(); ctx.restore();
+    label('POC ' + fmtP(pocPrice), g.w - W - 8, y, it.color, 'right');
+  }
+  if (it.valEl) it.valEl.textContent = 'POC ' + fmtP(pocPrice);
 }
 
 document.addEventListener('keydown', (e) => {
@@ -1512,6 +1557,36 @@ function paperFill(sym, sideName, qty, price, type) {
   if (P.trades.length > 300) P.trades.splice(0, P.trades.length - 300);
 }
 let paperBusy = false, paperNote = '';
+// Account value over time: one point an hour while the app is open, and one at every fill. The curve adds the value right now.
+function paperSnap(force) {
+  const P = state.paper, now = Math.floor(Date.now() / 1000);
+  if (!Array.isArray(P.eq) || !P.eq.length) P.eq = [[P.trades.length ? P.trades[0].time - 1 : now, P.start]];
+  if (!force && now - P.eq[P.eq.length - 1][0] < 3600) return false;
+  P.eq.push([now, +paperTotals().equity.toFixed(2)]);
+  if (P.eq.length > 2000) P.eq.splice(1, P.eq.length - 2000); // the starting point stays
+  return true;
+}
+function paperStats() {
+  const P = state.paper, closed = P.trades.filter((x) => x.pnl != null), wins = closed.filter((x) => x.pnl > 0), losses = closed.filter((x) => x.pnl < 0);
+  const sum = (a) => a.reduce((s, x) => s + x.pnl, 0), sw = sum(wins), sl = sum(losses);
+  const pts = [...(P.eq || []), [Math.floor(Date.now() / 1000), paperTotals().equity]];
+  let peak = -Infinity, dd = 0;
+  for (const [, v] of pts) { if (v > peak) peak = v; if (peak > 0 && (peak - v) / peak > dd) dd = (peak - v) / peak; }
+  const by = new Map(); for (const x of closed) by.set(x.sym, (by.get(x.sym) || 0) + x.pnl);
+  return { pts, n: closed.length, winRate: closed.length ? wins.length / closed.length * 100 : null, avgWin: wins.length ? sw / wins.length : null, avgLoss: losses.length ? sl / losses.length : null,
+    factor: sl < 0 ? sw / -sl : null, best: closed.length ? Math.max(...closed.map((x) => x.pnl)) : null, worst: closed.length ? Math.min(...closed.map((x) => x.pnl)) : null,
+    dd: dd * 100, by: [...by.entries()].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 6) };
+}
+function equitySvg(pts, start) {
+  const NS = 'http://www.w3.org/2000/svg', W = 300, H = 84, pad = 6;
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('class', 'eqcurve');
+  const t0 = pts[0][0], t1 = pts[pts.length - 1][0], vs = pts.map((p) => p[1]).concat(start), lo = Math.min(...vs), hi = Math.max(...vs);
+  const X = (tm) => (t1 > t0 ? pad + (tm - t0) / (t1 - t0) * (W - 2 * pad) : W / 2), Y = (v) => (hi > lo ? H - pad - (v - lo) / (hi - lo) * (H - 2 * pad) : H / 2);
+  const add = (tag, attrs) => { const n = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); svg.append(n); };
+  add('line', { x1: 0, x2: W, y1: Y(start), y2: Y(start), stroke: C.border2, 'stroke-dasharray': '4 4', 'vector-effect': 'non-scaling-stroke' }); // the starting cash
+  add('polyline', { points: pts.map((p) => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' '), fill: 'none', stroke: pts[pts.length - 1][1] >= start ? C.up : C.down, 'stroke-width': 1.6, 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke' });
+  return svg;
+}
 async function paperTick() { // refresh prices, then fill limit and stop orders whose price was reached
   if (paperBusy) return; paperBusy = true;
   try {
@@ -1529,7 +1604,7 @@ async function paperTick() { // refresh prices, then fill limit and stop orders 
       if (err) paperNote = t('Order for {0} cancelled.', o.sym) + ' ' + err;
       else { paperFill(o.sym, o.side, o.qty, px, o.type); paperNote = t('Filled: {0} {1} {2} at {3}', t(o.side === 'BUY' ? 'Buy' : 'Sell'), fmtQty(o.qty), o.sym, fmtLast(px)); }
     }
-    if (changed) { savePaper(); drawIbLines(); }
+    if (paperSnap(changed) || changed) { savePaper(); drawIbLines(); }
     checkAlerts();
     if (side === 'paper') renderPaper();
     if (side === 'alerts') renderAlerts();
@@ -1549,6 +1624,7 @@ function paperOrder(sym, sideName, qty, type, limit) {
     state.paper.orders.push({ id: Date.now(), sym, side: sideName, qty, type, price: limit, time: Math.floor(Date.now() / 1000) });
     paperNote = t('Order placed: {0} {1} {2}, {3} at {4}', t(sideName === 'BUY' ? 'Buy' : 'Sell'), fmtQty(qty), sym, t(ORDER_TYPES[type]), fmtLast(limit));
   }
+  if (type === 'MKT') paperSnap(true);
   savePaper(); drawIbLines(); renderPaper();
   if (type !== 'MKT') paperTick(); // fills at once if the price is already there
   return null;
@@ -1560,13 +1636,13 @@ function buildPaper() { // the fixed part of the tab: summary, order ticket and 
   reset.addEventListener('click', () => {
     const v = prompt(t('Starting cash for the new practice account:'), String(state.paper.start)); if (v == null) return;
     const start = Math.min(1e12, Math.max(100, +String(v).replace(/[, ]/g, '') || 100000));
-    state.paper = { start, cash: start, realized: 0, pos: {}, orders: [], trades: [] }; paperNote = '';
+    state.paper = { start, cash: start, realized: 0, pos: {}, orders: [], trades: [], eq: [[Math.floor(Date.now() / 1000), start]] }; paperNote = '';
     savePaper(); drawIbLines(); renderPaper();
   });
   const ui = { sum: el('div', { className: 'ibsum' }), sym: el('b'), last: el('span'), qty: el('input', { type: 'number', min: '0', step: 'any', value: String(store.get('paperQty', 10)) }),
     type: el('select'), price: el('input', { type: 'number', min: '0', step: 'any', placeholder: t('Price'), hidden: true }),
     buy: el('button', { className: 'buy', textContent: t('Buy') }), sell: el('button', { className: 'sell', textContent: t('Sell') }), note: el('p', { className: 'pnote' }),
-    pos: el('div'), orders: el('div'), trades: el('div') };
+    pos: el('div'), orders: el('div'), trades: el('div'), perf: el('div') };
   for (const [k, name] of Object.entries(ORDER_TYPES)) ui.type.append(el('option', { value: k, textContent: t(name) }));
   ui.type.addEventListener('change', () => { ui.price.hidden = ui.type.value === 'MKT'; if (!ui.price.hidden && !ui.price.value) { const px = paperPrice(state.symbol); if (px != null) ui.price.value = String(+px.toFixed(px < 10 ? 4 : 2)); } });
   ui.qty.addEventListener('change', () => store.set('paperQty', +ui.qty.value || 10));
@@ -1581,7 +1657,7 @@ function buildPaper() { // the fixed part of the tab: summary, order ticket and 
       el('div', { className: 'trow' }, el('label', {}, el('span', { textContent: t('Quantity') }), ui.qty)),
       el('div', { className: 'trow' }, ui.type, ui.price),
       el('div', { className: 'trow' }, ui.buy, ui.sell), ui.note),
-    el('h4', { textContent: t('Positions') }), ui.pos, el('h4', { textContent: t('Working orders') }), ui.orders, el('h4', { textContent: t('History') }), ui.trades,
+    el('h4', { textContent: t('Positions') }), ui.pos, el('h4', { textContent: t('Working orders') }), ui.orders, el('h4', { textContent: t('Performance') }), ui.perf, el('h4', { textContent: t('History') }), ui.trades,
     el('p', { className: 'pfoot', textContent: t('Virtual money only: nothing is sent to a broker. Orders fill at the latest price this app has, also when the market is closed. Limit and stop orders are checked about every 20 seconds while the app is open. Prices are not converted between currencies.') }));
   return ui;
 }
@@ -1619,6 +1695,23 @@ function renderPaper() {
       el('div', { className: 'r' }, el('span', { textContent: fmtLast(o.price) }), cancel));
     r.addEventListener('click', () => setSymbol(o.sym));
     ui.orders.append(r);
+  }
+  const st = paperStats(); ui.perf.textContent = '';
+  if (st.pts.length > 2 || st.pts[st.pts.length - 1][1] !== P.start) ui.perf.append(equitySvg(st.pts, P.start)); else empty(ui.perf, 'The account value curve appears here once the account has been used.');
+  const grid = el('div', { className: 'ibsum' }), stat = (label, text, tone) => grid.append(el('span', { textContent: t(label) }), el('span', { className: tone == null ? '' : cls(tone), textContent: text }));
+  stat('Max drawdown', st.dd ? '-' + st.dd.toFixed(2) + '%' : '0.00%', st.dd ? -1 : null);
+  stat('Closed trades', String(st.n));
+  if (st.n) {
+    stat('Win rate', st.winRate.toFixed(0) + '%');
+    stat('Average win', st.avgWin == null ? '–' : signed(st.avgWin), st.avgWin); stat('Average loss', st.avgLoss == null ? '–' : signed(st.avgLoss), st.avgLoss);
+    stat('Profit factor', st.factor == null ? '–' : st.factor.toFixed(2));
+    stat('Best trade', signed(st.best), st.best); stat('Worst trade', signed(st.worst), st.worst);
+  }
+  ui.perf.append(grid);
+  if (st.by.length) {
+    const by = el('div', { className: 'bysym' });
+    for (const [sym, pnl] of st.by) by.append(el('span', { className: 'muted', textContent: t('Realized P&L') + ' · ' + sym }), el('span', { className: cls(pnl), textContent: signed(pnl) }));
+    ui.perf.append(by);
   }
   ui.trades.textContent = '';
   if (!P.trades.length) empty(ui.trades, 'No trades yet.');
@@ -1899,6 +1992,16 @@ else (EMBED ? Promise.resolve() : pullState()).then(() => {
   load(); requestAnimationFrame(frame);
   setInterval(() => { if (!document.hidden && state.view === 'chart') load({ refresh: true }); }, 30000);
   if (EMBED) return; // an extra chart of the layout: the main window does the rest
+  if (WEB && window.WebData.PROXY && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) { // once per browser tab; nothing that identifies the visitor is sent
+    try {
+      if (!sessionStorage.getItem('cd.hit')) {
+        sessionStorage.setItem('cd.hit', '1');
+        const today = new Date().toISOString().slice(0, 10), seen = store.shared('seen', null);
+        localStorage.setItem('cd.seen', JSON.stringify(today));
+        fetch(`${window.WebData.PROXY}/hit?day=${seen === today ? 0 : 1}&new=${seen ? 0 : 1}`).catch(() => {});
+      }
+    } catch { /* storage blocked: not counted */ }
+  }
   applyLayout(); refreshWatch(); refreshIb();
   setInterval(() => { if (!document.hidden) refreshWatch(); }, 60000);
   // working orders and waiting alerts are checked even in a background tab
