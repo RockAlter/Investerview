@@ -654,7 +654,7 @@ async function load({ refresh = false, fresh = false } = {}) {
     derive();
     showMsg(null);
     if (refresh && chart) { applyData(); updateLegend(state.data.length - 1); } else buildChart(false);
-    document.title = `${state.symbol} ${fmtP(j.price)} · ChartDesk`;
+    document.title = `${state.symbol} ${fmtP(j.price)} · InvestorView`;
   } catch (e) {
     if (seq !== loadSeq) return;
     if (refresh) { markUpdated(e.message); return; } // keep the chart on screen
@@ -903,7 +903,7 @@ const RELEASES = 'https://github.com/RockAlter/Investerview/releases';
 const verEl = el('a', { id: 'ver', href: RELEASES, target: '_blank', rel: 'noopener' }); toolsEl.append(verEl);
 api('/api/version').then((v) => {
   verEl.textContent = 'v' + v.version; verEl.href = RELEASES + '/tag/v' + v.version;
-  verEl.title = 'Investerview ' + v.version + (WEB ? ' (web)' : '') + ' – ' + t('release notes on GitHub');
+  verEl.title = 'InvestorView ' + v.version + (WEB ? ' (web)' : '') + ' – ' + t('release notes on GitHub');
 }).catch(() => {});
 if (WEB) { // no local server: hide what needs one, and say so
   $('#sideTabs [data-side=pos]').hidden = true; $('#ext').closest('label').hidden = true; $('#impWatch').hidden = true;
@@ -1881,7 +1881,7 @@ function checkAlerts() {
     a.hit = nowSec(); a.hitPrice = px; changed = true;
     const body = t(a.op === 'above' ? '{0} rose to {1} (alert at {2})' : '{0} fell to {1} (alert at {2})', a.sym, fmtLast(px), fmtLast(a.price));
     toast(t('Price alert'), body, () => setSymbol(a.sym, true)); beep();
-    try { if (canNotify() && Notification.permission === 'granted') new Notification('Investerview – ' + t('Price alert'), { body }); } catch { /* the in-app message is enough */ }
+    try { if (canNotify() && Notification.permission === 'granted') new Notification('InvestorView – ' + t('Price alert'), { body, icon: 'icon.png' }); } catch { /* the in-app message is enough */ }
   }
   if (!changed) return;
   const done = state.alerts.filter((a) => a.hit);
