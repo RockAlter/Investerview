@@ -923,9 +923,18 @@ function saveDrawings() {
   if (mine && mine.length) all[state.symbol] = mine; else delete all[state.symbol];
   state.drawings = all; store.set('drawings', all);
 }
-window.addEventListener('storage', (e) => { // another chart of the layout changed something
+// Another window of the app (a second app window, another browser tab, or another chart of the layout) changed
+// something: take it over, so this window's next save to the data file does not undo that change.
+window.addEventListener('storage', (e) => {
   if (e.key === 'cd.drawings') { state.drawings = store.get('drawings', {}); selected = null; if (!EMBED) pushState(); }
-  else if (EMBED && (e.key === 'cd.paper' || e.key === 'cd.alerts')) { state.paper = store.get('paper', state.paper); state.alerts = store.get('alerts', []); drawIbLines(); }
+  else if (e.key === 'cd.paper' || e.key === 'cd.alerts') {
+    state.paper = store.get('paper', state.paper); state.alerts = store.get('alerts', state.alerts); drawIbLines();
+    if (!EMBED && side === 'paper') renderPaper();
+    if (!EMBED && side === 'alerts') renderAlerts();
+  } else if (EMBED) return; // the rest is the main window's
+  else if (e.key === 'cd.watch') { state.watch = store.get('watch', state.watch); renderWatch(); refreshWatch(); }
+  else if (e.key === 'cd.collapsed') { collapsed.clear(); for (const c of store.get('collapsed', [])) collapsed.add(c); renderWatch(); }
+  else if (e.key === 'cd.indicators') { state.indicators = store.get('indicators', state.indicators); if (chart && state.data.length) buildChart(true); }
 });
 function removeDrawings() {
   if (selected) { state.drawings[state.symbol] = list().filter((d) => d !== selected); selected = null; }
@@ -1557,6 +1566,12 @@ function paperFill(sym, sideName, qty, price, type) {
   if (P.trades.length > 300) P.trades.splice(0, P.trades.length - 300);
 }
 let paperBusy = false, paperNote = '';
+// With several app windows open, only one of them fills working orders and fires alerts, so nothing happens twice.
+// The browser hands the lock to another window when that one closes. Without the Locks API every window does it.
+let paperLeader = !(navigator.locks && navigator.locks.request);
+if (!paperLeader && !EMBED) {
+  navigator.locks.request('investorview-paper', () => { paperLeader = true; return new Promise(() => {}); }).catch(() => { paperLeader = true; });
+}
 // Account value over time: one point an hour while the app is open, and one at every fill. The curve adds the value right now.
 function paperSnap(force) {
   const P = state.paper, now = Math.floor(Date.now() / 1000);
@@ -1587,15 +1602,16 @@ function equitySvg(pts, start) {
   add('polyline', { points: pts.map((p) => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' '), fill: 'none', stroke: pts[pts.length - 1][1] >= start ? C.up : C.down, 'stroke-width': 1.6, 'stroke-linejoin': 'round', 'vector-effect': 'non-scaling-stroke' });
   return svg;
 }
-async function paperTick() { // refresh prices, then fill limit and stop orders whose price was reached
+async function paperTick(own) { // refresh prices, then fill limit and stop orders whose price was reached
   if (paperBusy) return; paperBusy = true;
+  const lead = paperLeader || own === true; // own: right after an order placed in this window
   try {
     const P = state.paper, syms = [...new Set([...Object.keys(P.pos), ...P.orders.map((o) => o.sym), ...state.alerts.filter((a) => !a.hit).map((a) => a.sym)])].filter((s) => s !== state.symbol);
     if (syms.length) {
       try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',')); for (const r of j.rows) if (r.last != null) paperQ.set(r.symbol, r.last); } catch { /* keep the last known prices */ }
     }
     let changed = false;
-    for (const o of [...P.orders]) {
+    if (lead) for (const o of [...P.orders]) {
       const px = paperPrice(o.sym); if (px == null) continue;
       const below = (o.type === 'LMT') === (o.side === 'BUY'); // buy limit and sell stop wait for a lower price
       if (below ? px > o.price : px < o.price) continue;
@@ -1604,8 +1620,10 @@ async function paperTick() { // refresh prices, then fill limit and stop orders 
       if (err) paperNote = t('Order for {0} cancelled.', o.sym) + ' ' + err;
       else { paperFill(o.sym, o.side, o.qty, px, o.type); paperNote = t('Filled: {0} {1} {2} at {3}', t(o.side === 'BUY' ? 'Buy' : 'Sell'), fmtQty(o.qty), o.sym, fmtLast(px)); }
     }
-    if (paperSnap(changed) || changed) { savePaper(); drawIbLines(); }
-    checkAlerts();
+    if (lead) {
+      if (paperSnap(changed) || changed) { savePaper(); drawIbLines(); }
+      if (paperLeader) checkAlerts();
+    }
     if (side === 'paper') renderPaper();
     if (side === 'alerts') renderAlerts();
   } finally { paperBusy = false; }
@@ -1626,7 +1644,7 @@ function paperOrder(sym, sideName, qty, type, limit) {
   }
   if (type === 'MKT') paperSnap(true);
   savePaper(); drawIbLines(); renderPaper();
-  if (type !== 'MKT') paperTick(); // fills at once if the price is already there
+  if (type !== 'MKT') paperTick(true); // fills at once if the price is already there
   return null;
 }
 let paperUI = null;
@@ -2005,6 +2023,6 @@ else (EMBED ? Promise.resolve() : pullState()).then(() => {
   applyLayout(); refreshWatch(); refreshIb();
   setInterval(() => { if (!document.hidden) refreshWatch(); }, 60000);
   // working orders and waiting alerts are checked even in a background tab
-  paperTick(); setInterval(() => { if (state.paper.orders.length || state.alerts.some((a) => !a.hit) || ((side === 'paper' || side === 'alerts') && !document.hidden)) paperTick(); }, 20000);
+  paperTick(); setInterval(() => { if ((paperLeader && (state.paper.orders.length || state.alerts.some((a) => !a.hit))) || ((side === 'paper' || side === 'alerts') && !document.hidden)) paperTick(); }, 20000);
 });
 })();
