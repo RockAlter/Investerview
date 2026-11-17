@@ -2,7 +2,7 @@
 // It answers the same /api/... paths the local server does, so app.js works unchanged.
 // A web page may only call services that allow it, so prices come from, in this order:
 //   crypto:          Binance, then Coinbase (both allow web pages), then the sources below
-//   everything else: 1. the Investerview data proxy (worker/worker.js, a Cloudflare Worker that
+//   everything else: 1. the InvestorView data proxy (worker/worker.js, a Cloudflare Worker that
 //                       asks Yahoo Finance, then Nasdaq, then Tencent on the page's behalf)
 //                    2. Tencent Finance directly (daily, weekly and monthly bars; US, Hong Kong
 //                       and China stocks and the main indices)
@@ -11,7 +11,7 @@
 // A source that fails is skipped for two minutes, so the page switches over by itself.
 (() => {
 'use strict';
-const VERSION = '1.10.0'; // keep in step with server.js and package.json
+const VERSION = '2.0.0'; // keep in step with server.js and package.json
 const DOWNLOAD = 'https://github.com/RockAlter/Investerview/releases/latest';
 // Address of the deployed data proxy (see worker/README.md). Empty = not deployed yet: the page
 // then uses Tencent and AllOrigins only. For testing, ?proxy=http://localhost:8787 overrides it.

@@ -1,10 +1,10 @@
-# Investerview
+# InvestorView
 
 [English](README.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md)
 
-一款行情筛选应用：在浏览器中进行本地看图和选股（界面上的名称是 **ChartDesk**）。它运行在你自己的电脑上，不需要账号或 API 密钥，除 Node.js 外没有任何依赖。
+一款行情筛选应用：在浏览器中进行本地看图和选股。它运行在你自己的电脑上，不需要账号或 API 密钥，除 Node.js 外没有任何依赖。
 
-- **桌面版（全部功能）：** 从[最新发布](https://github.com/RockAlter/Investerview/releases/latest)下载 `Investerview.exe`，或按下文说明从源码运行。
+- **桌面版（全部功能）：** 从[最新发布](https://github.com/RockAlter/Investerview/releases/latest)下载 `InvestorView.exe`，或按下文说明从源码运行。
 - **网页版：** <https://rockalter.github.io/Investerview/> —— 无需安装；支持股票、ETF、指数和加密货币，但有少量限制。见[网页版及其限制](#网页版及其限制)。
 
 ## 功能
@@ -19,7 +19,7 @@
 - **盘前盘后** —— 可选显示股票和 ETF 在 1 分钟至 1 小时图上的盘前、盘后 K 线（美东时间 4:00–20:00），以阴影标出，并在自选列表中显示最新的盘前盘后价格。该数据源不提供夜盘数据。
 - **语言** —— English、简体中文、繁體中文和日本語。界面自动跟随浏览器/系统语言，也可在顶栏的选择框中手动切换。翻译文本在 `public/i18n.js` 中。
 - **浅色和深色主题** —— 跟随系统设置；顶栏的 ☀ / ☾ 按钮可切换并记住你的选择。
-- **版本号** —— 当前运行的版本显示在左侧工具栏底部和控制台窗口中。
+- **版本号** —— 当前运行的版本显示在左侧工具栏底部。
 - **指标** —— 共 25 个。叠加在价格图上：SMA、EMA、WMA、线性回归线、VWAP、布林带、唐奇安通道、肯特纳通道、超级趋势、抛物线 SAR、成交量。图表下方：RSI、MACD、随机指标 KD、CCI、威廉 %R、MFI、ADX/DMI、ATR、标准差、ROC、动量、OBV。周期可修改。
 - **画线工具** —— 共 25 个，在左侧工具栏中分组：线条（趋势线、射线、延长线、箭头、水平线、水平射线、垂直线、十字线）、通道（平行通道、回归通道 ±2σ、安德鲁音叉线）、斐波那契与江恩（回撤、扩展、扇形线、时间周期、江恩角度线）、形状（矩形、椭圆、三角形）、测量（测量、价格范围、日期范围、带风险收益比的多头/空头仓位、锚定 VWAP）和文字。选中画线后可拖动控制点调整。画线按代码保存，切换周期后仍然保留。
 - **模拟交易** —— 侧栏的 **模拟** 标签页提供一个使用虚拟资金的模拟账户（初始 100,000，可重置）。可用市价单、限价单和止损单买入、卖出或做空当前图表的代码；查看持仓、平均成本、已实现和未实现盈亏以及成交记录；平均成本和挂单会画在图表上。不会向任何券商发送委托。委托按应用掌握的最新价格成交（休市时也是如此），限价单和止损单在应用打开期间约每 20 秒检查一次；不支持融资，不计手续费，不做货币换算。
@@ -36,7 +36,7 @@
 | 顺序 | 数据源 | 覆盖范围 |
 |---|---|---|
 | 加密货币 | Binance，其次 Coinbase（浏览器直接获取） | 以美元计价的加密货币，全部周期 |
-| 1 | **Investerview 数据代理** —— 一个小型 Cloudflare Worker（[`worker/`](worker/README.md)），代替网页依次向 Yahoo Finance、Nasdaq、腾讯请求数据 | 桌面版能显示的全部内容，包括分时、外汇、期货和代码搜索 |
+| 1 | **InvestorView 数据代理** —— 一个小型 Cloudflare Worker（[`worker/`](worker/README.md)），代替网页依次向 Yahoo Finance、Nasdaq、腾讯请求数据 | 桌面版能显示的全部内容，包括分时、外汇、期货和代码搜索 |
 | 2 | 腾讯财经（浏览器直接获取） | 美股和 ETF、标普 500 / 道琼斯 / 纳斯达克 / 恒生指数、港股和 A 股；日线、周线、月线 |
 | 3 | 通过公共代理 AllOrigins 访问 Yahoo Finance | 全部内容，但速度慢且经常不可用 |
 
@@ -77,7 +77,7 @@ node server.js
 npm run build
 ```
 
-它会生成 `dist/Investerview.exe`（约 80 MB，因为包含了 Node 运行时）。构建过程会通过 `npx` 下载一个辅助工具 [postject](https://github.com/nodejs/postject)。双击 exe 即可启动应用并在默认浏览器中打开；关闭它的控制台窗口即停止运行。
+它会生成 `dist/InvestorView.exe`（约 80 MB，因为包含了 Node 运行时）。构建过程会通过 `npx` 下载一个辅助工具 [postject](https://github.com/nodejs/postject)。构建过程还会通过 `npm` 下载 [rcedit](https://github.com/electron/rcedit)，用来给 exe 设置图标和名称。双击 exe 会在独立窗口中打开应用，没有控制台，也不占用浏览器标签页；关闭窗口即停止运行。这个窗口是应用模式下的 Microsoft Edge（Windows 自带）或 Chrome，使用独立的浏览器配置。如果两者都没有安装，或使用 `--browser` 参数，应用会改在默认浏览器中打开，并在页面关闭十分钟后自动停止。
 
 该 exe 没有代码签名，首次运行时 Windows SmartScreen 会发出警告（点击“更多信息”→“仍要运行”）。
 
@@ -91,7 +91,7 @@ npm run build
 {
   "mcpServers": {
     "investerview": {
-      "command": "C:\\path\\to\\Investerview.exe",
+      "command": "C:\\path\\to\\InvestorView.exe",
       "args": ["--mcp"]
     }
   }
@@ -111,7 +111,7 @@ npm run build
 | `get_drawings` | 你保存的画线：线条、价格水平线、通道、仓位、文字备注和斐波那契水平 |
 | `get_alerts` | 你的价格提醒：等待中的和已触发的 |
 
-还有一个现成的提示词 `watchlist_report`。也可以直接说：“根据我的 Investerview 自选列表写一份晨报”。
+还有一个现成的提示词 `watchlist_report`。也可以直接说：“根据我的 InvestorView 自选列表写一份晨报”。
 
 自选列表和画线工具读取的是下文所述的数据文件，所以请先至少打开一次桌面版。
 
@@ -192,7 +192,7 @@ Yahoo Finance 会拒绝来自某些网络的请求：某些 VPN 出口、公司�
 
 ```
 server.js            本地网页服务器 + 行情代理 + MCP 服务（无依赖）
-build-exe.js         构建 dist/Investerview.exe
+build-exe.js         构建 dist/InvestorView.exe
 public/index.html    页面结构
 public/app.js        图表、指标、画线、自选列表、筛选器
 public/i18n.js       界面翻译

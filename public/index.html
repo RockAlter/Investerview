@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ChartDesk</title>
+<title>InvestorView</title>
+<link rel="icon" type="image/png" sizes="256x256" href="icon.png">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <script>
 // set the theme before the page paints, so there is no dark flash in light mode
 (function () { var t = null; try { t = JSON.parse(localStorage.getItem('cd.theme')); } catch (e) {}
@@ -13,7 +15,7 @@
 </head>
 <body>
 <header id="top">
-  <div class="brand">Chart<span>Desk</span></div>
+  <div class="brand"><img src="icon.svg" alt="" width="22" height="22"><b>Investor<span>View</span></b></div>
   <div class="search">
     <input id="sym" placeholder="Search symbol or company…" data-i18n-ph autocomplete="off" spellcheck="false">
     <ul id="results" hidden></ul>

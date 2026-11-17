@@ -1,4 +1,4 @@
-# Investerview data proxy
+# InvestorView data proxy
 
 A small [Cloudflare Worker](https://developers.cloudflare.com/workers/) that gives the web version
 (GitHub Pages) stock data. A web page cannot call Yahoo Finance or Nasdaq itself (they do not allow

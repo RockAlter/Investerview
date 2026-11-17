@@ -1,11 +1,11 @@
 'use strict';
-// ChartDesk local server: serves the app and proxies free market data (Yahoo Finance
+// InvestorView local server: serves the app and proxies free market data (Yahoo Finance
 // public chart endpoints) so the browser does not hit CORS limits. No dependencies.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-// command-line options: --port=5178  --ibkr=https://localhost:5000  --mcp
+// command-line options: --port=5178  --ibkr=https://localhost:5000  --mcp  --browser (open in the default browser instead of the app window)  --no-open
 const argVal = (name) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : null; };
 const PORT = Number(argVal('port') || process.env.PORT) || 5178;
 const PUB = path.join(__dirname, 'public');
@@ -18,7 +18,7 @@ const HEADERS = {
 const INTERVALS = new Set(['1m', '5m', '15m', '60m', '1d', '1wk', '1mo']);
 const RANGES = new Set(['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'max']);
 const SYMBOL_RE = /^[A-Za-z0-9.\-=^]{1,20}$/;
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.png': 'image/png' };
 
 // ---- tiny promise cache -------------------------------------------------
 const cache = new Map();
@@ -217,7 +217,7 @@ async function diagnose() {
     return row;
   }));
   return {
-    app: 'Investerview ' + VERSION, time: new Date().toISOString(), node: process.version, platform: process.platform,
+    app: 'InvestorView ' + VERSION, time: new Date().toISOString(), node: process.version, platform: process.platform,
     proxyEnvSet: !!(process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy),
     cookieObtained: !!(yhAuth && yhAuth.cookie), crumbObtained: !!(yhAuth && yhAuth.crumb),
     summary: working ? `${working} of ${tries.length} ways of reaching Yahoo Finance work from this computer.` : 'Yahoo Finance is refusing or unreachable from this computer on every route tried.',
@@ -405,7 +405,7 @@ async function handleApi(url, req, res) {
 // them here, so they survive a cleared browser and can be read by the MCP server.
 const os = require('os');
 const DATA_FILE = process.env.INVESTERVIEW_DATA
-  || path.join(process.env.APPDATA || path.join(os.homedir(), '.config'), 'Investerview', 'data.json');
+  || path.join(process.env.APPDATA || path.join(os.homedir(), '.config'), 'Investerview', 'data.json'); // the folder keeps the app's earlier name, so existing data is still found
 function readState() { try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch { return null; } }
 function writeState(s) {
   fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
@@ -481,7 +481,7 @@ function ib(method, p) {
     const secure = IB_URL.protocol === 'https:';
     const req = (secure ? require('https') : http).request({
       hostname: IB_URL.hostname, port: IB_URL.port || (secure ? 443 : 80), path: '/v1/api' + p, method, rejectUnauthorized: false, timeout: 8000,
-      headers: { 'User-Agent': 'Investerview', Accept: 'application/json', ...(method === 'POST' ? { 'Content-Length': 0 } : {}) },
+      headers: { 'User-Agent': 'InvestorView', Accept: 'application/json', ...(method === 'POST' ? { 'Content-Length': 0 } : {}) },
     }, (res) => {
       let body = ''; res.setEncoding('utf8');
       res.on('data', (c) => { if (body.length < 5e6) body += c; });
@@ -567,7 +567,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '1.10.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '2.0.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',
@@ -628,7 +628,7 @@ function describeDrawing(d) {
   if (d.type === 'fibext' && d.c) o.levels = [0, 0.618, 1, 1.272, 1.618, 2, 2.618].map((f) => ({ pct: pct(f), price: num(d.c.price + (d.b.price - d.a.price) * f) }));
   return o;
 }
-const NO_STATE = 'No saved data yet. Open the Investerview app once (version 1.2.0 or later) so it can save the watchlist and drawings to disk.';
+const NO_STATE = 'No saved data yet. Open the InvestorView app once (version 1.2.0 or later) so it can save the watchlist and drawings to disk.';
 const symProp = { type: 'string', description: 'Ticker in Yahoo Finance format, e.g. AAPL, BRK-B, 7203.T, 0700.HK, ^GSPC, BTC-USD, EURUSD=X, ES=F' };
 const tfProp = { type: 'string', enum: Object.keys(TF), description: 'Bar size. Default 1D.' };
 
@@ -717,7 +717,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'get_watchlist',
-    description: 'The user\'s saved watchlist from the Investerview app, grouped by their sections, with a current quote for each symbol.',
+    description: 'The user\'s saved watchlist from the InvestorView app, grouped by their sections, with a current quote for each symbol.',
     inputSchema: { type: 'object', properties: { include_quotes: { type: 'boolean', description: 'Default true. Set false for just the symbols.' } } },
     run: async (a) => {
       const s = readState();
@@ -734,7 +734,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'get_drawings',
-    description: 'Chart drawings the user saved in the Investerview app: trend lines, rays, horizontal price levels, channels, pitchforks, shapes, text notes, long/short positions (entry, target, stop) and Fibonacci retracements and extensions (with their level prices). Omit symbol to list every symbol that has drawings.',
+    description: 'Chart drawings the user saved in the InvestorView app: trend lines, rays, horizontal price levels, channels, pitchforks, shapes, text notes, long/short positions (entry, target, stop) and Fibonacci retracements and extensions (with their level prices). Omit symbol to list every symbol that has drawings.',
     inputSchema: { type: 'object', properties: { symbol: symProp } },
     run: async (a) => {
       const s = readState();
@@ -746,7 +746,7 @@ const MCP_TOOLS = [
   },
   {
     name: 'get_alerts',
-    description: 'Price alerts the user set in the Investerview app: the ones still waiting (symbol, direction, price) and the ones that already triggered (with when and at what price). The app checks alerts only while it is open, so a waiting alert may already have been passed. Read-only: alerts are created in the app.',
+    description: 'Price alerts the user set in the InvestorView app: the ones still waiting (symbol, direction, price) and the ones that already triggered (with when and at what price). The app checks alerts only while it is open, so a waiting alert may already have been passed. Read-only: alerts are created in the app.',
     inputSchema: { type: 'object', properties: { symbol: symProp } },
     run: async (a) => {
       const s = readState();
@@ -760,8 +760,8 @@ const MCP_TOOLS = [
 ];
 const MCP_PROMPTS = [{
   name: 'watchlist_report',
-  description: 'Write a market report on the saved Investerview watchlist.',
-  text: 'Write a market report on my Investerview watchlist.\n\n1. Call get_watchlist for my sections and current quotes.\n2. For the three biggest movers (by absolute change_pct), call get_technicals.\n3. Call get_drawings and note any symbol trading within 2% of a level I saved.\n\nStructure the report as: a short overall summary; one paragraph per watchlist section; notable technical readings (RSI above 70 or below 30, price crossing its 50- or 200-day average, unusual relative volume); and levels to watch. Give figures with each claim. End by noting that prices may be delayed and that this is a summary of data, not investment advice.',
+  description: 'Write a market report on the saved InvestorView watchlist.',
+  text: 'Write a market report on my InvestorView watchlist.\n\n1. Call get_watchlist for my sections and current quotes.\n2. For the three biggest movers (by absolute change_pct), call get_technicals.\n3. Call get_drawings and note any symbol trading within 2% of a level I saved.\n\nStructure the report as: a short overall summary; one paragraph per watchlist section; notable technical readings (RSI above 70 or below 30, price crossing its 50- or 200-day average, unusual relative volume); and levels to watch. Give figures with each claim. End by noting that prices may be delayed and that this is a summary of data, not investment advice.',
 }];
 
 function startMcp() {
@@ -775,7 +775,7 @@ function startMcp() {
     try {
       if (method === 'initialize') {
         return reply({ protocolVersion: PROTOCOLS.includes(params.protocolVersion) ? params.protocolVersion : PROTOCOLS[0], capabilities: { tools: {}, prompts: {} },
-          serverInfo: { name: 'investerview', version: VERSION }, instructions: 'Read-only market data, screening and the user\'s saved watchlist and chart drawings from the Investerview app. Data comes from Yahoo Finance and may be delayed. Nothing here places trades.' });
+          serverInfo: { name: 'investorview', version: VERSION }, instructions: 'Read-only market data, screening and the user\'s saved watchlist and chart drawings from the InvestorView app. Data comes from Yahoo Finance and may be delayed. Nothing here places trades.' });
       }
       if (method === 'ping') return reply({});
       if (method === 'tools/list') return reply({ tools: MCP_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema, annotations: { readOnlyHint: true } })) });
@@ -807,7 +807,7 @@ function startMcp() {
     }
   });
   process.stdin.on('end', () => process.exit(0));
-  console.error(`Investerview MCP server ${VERSION} ready (data file: ${DATA_FILE})`);
+  console.error(`InvestorView MCP server ${VERSION} ready (data file: ${DATA_FILE})`);
 }
 
 let sea = null; // set when running as a packaged single-file executable
@@ -833,22 +833,57 @@ const server = http.createServer(async (req, res) => {
 });
 
 const URL_LOCAL = `http://localhost:${PORT}`;
+const NO_OPEN = !!process.env.NO_OPEN || process.argv.includes('--no-open');
+let lastRequest = Date.now();
+server.on('request', () => { lastRequest = Date.now(); });
 function openBrowser() {
-  if (!sea || process.env.NO_OPEN) return; // only the packaged exe opens a browser by itself
   const cmd = process.platform === 'win32' ? `start "" ${URL_LOCAL}` : process.platform === 'darwin' ? `open ${URL_LOCAL}` : `xdg-open ${URL_LOCAL}`;
   require('child_process').exec(cmd, () => {});
 }
+// The packaged app shows the page in a window of its own: Microsoft Edge (part of Windows) or Chrome in "app" mode,
+// which has no tabs or address bar. It uses its own browser profile, so the window is separate from normal browsing.
+function findAppBrowser() {
+  if (process.platform !== 'win32') return null;
+  const roots = [process.env['ProgramFiles(x86)'], process.env.ProgramFiles, process.env.LOCALAPPDATA].filter(Boolean);
+  for (const rel of ['Microsoft\\Edge\\Application\\msedge.exe', 'Google\\Chrome\\Application\\chrome.exe']) {
+    for (const r of roots) { const p = path.join(r, rel); if (fs.existsSync(p)) return p; }
+  }
+  return null;
+}
+// Opens the window. owner = this process runs the server and stops when the window is closed.
+function openApp(owner) {
+  if (!sea || NO_OPEN) return; // only the packaged exe opens anything by itself
+  const exe = process.argv.includes('--browser') ? null : findAppBrowser();
+  if (exe) {
+    const profile = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'InvestorView', 'window');
+    try {
+      fs.mkdirSync(profile, { recursive: true });
+      const child = require('child_process').spawn(exe, [`--app=${URL_LOCAL}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
+        '--disable-background-mode', '--disable-features=msEdgeStartupBoost,Translate', '--window-size=1440,900'], { stdio: 'ignore', detached: !owner });
+      if (!owner) { child.unref(); return; }
+      child.on('error', () => { openBrowser(); stopWhenIdle(); });
+      child.on('exit', () => process.exit(0)); // the window was closed: the app is done
+      return;
+    } catch { /* fall through to the default browser */ }
+  }
+  openBrowser();
+  if (owner) stopWhenIdle();
+}
+// Shown in a normal browser tab there is no window to watch, and the exe has no console to close, so it stops
+// by itself once the page has been closed for ten minutes (an open page asks for prices at least once a minute).
+function stopWhenIdle() {
+  setInterval(() => { if (Date.now() - lastRequest > 10 * 60000) process.exit(0); }, 30000);
+}
 server.on('error', (e) => {
-  if (e.code === 'EADDRINUSE') {
-    console.log(`Port ${PORT} is already in use - ChartDesk is probably already running. Opening ${URL_LOCAL}`);
-    openBrowser();
+  if (e.code === 'EADDRINUSE') { // already running: show its window instead of starting twice
+    console.log(`Port ${PORT} is already in use - InvestorView is probably already running. Opening ${URL_LOCAL}`);
+    openApp(false);
     return setTimeout(() => process.exit(0), 1500);
   }
   console.error(e.message); process.exit(1);
 });
 if (process.argv.includes('--mcp')) startMcp(); // AI-tool mode: no web server, talk MCP on stdin/stdout
 else server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Investerview ${VERSION} running at ${URL_LOCAL}`);
-  if (sea) console.log('Keep this window open while you use the app. Close it to stop.');
-  openBrowser();
+  console.log(`InvestorView ${VERSION} running at ${URL_LOCAL}`);
+  openApp(true);
 });

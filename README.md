@@ -1,10 +1,10 @@
-# Investerview
+# InvestorView
 
 **English** | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md)
 
-A trading screening app: local charting and stock screening in the browser (the UI calls itself **ChartDesk**). It runs on your own machine, needs no account or API key, and has no dependencies beyond Node.js.
+A trading screening app: local charting and stock screening in the browser. It runs on your own machine, needs no account or API key, and has no dependencies beyond Node.js.
 
-- **Desktop app (everything):** download `Investerview.exe` from the [latest release](https://github.com/RockAlter/Investerview/releases/latest), or run it from source as described below.
+- **Desktop app (everything):** download `InvestorView.exe` from the [latest release](https://github.com/RockAlter/Investerview/releases/latest), or run it from source as described below.
 - **Web version:** <https://rockalter.github.io/Investerview/> — nothing to install; stocks, ETFs, indices and crypto, with a few limits. See [Web version and its limits](#web-version-and-its-limits).
 
 ## Features
@@ -19,7 +19,7 @@ A trading screening app: local charting and stock screening in the browser (the 
 - **Extended hours** — optional pre-market and after-hours bars (4:00 am–8:00 pm ET) for stocks and ETFs on the 1m–1h charts, shaded, plus the latest extended-hours price in the watchlist. The overnight session is not available from this data source.
 - **Languages** — English, 简体中文, 繁體中文 and 日本語. The interface follows the browser/OS language automatically, with a selector in the top bar to override it. Translations live in `public/i18n.js`.
 - **Light and dark themes** — follows your system setting; the ☀ / ☾ button in the top bar switches and remembers your choice.
-- **Version label** — the running version is shown at the bottom of the left toolbar and in the console window.
+- **Version label** — the running version is shown at the bottom of the left toolbar.
 - **Indicators** — 25 in all. On the price chart: SMA, EMA, WMA, linear regression line, VWAP, Bollinger Bands, Donchian and Keltner channels, Supertrend, Parabolic SAR, volume. Below it: RSI, MACD, Stochastic, CCI, Williams %R, MFI, ADX/DMI, ATR, standard deviation, ROC, momentum, OBV. Periods are editable.
 - **Drawing tools** — 25, grouped in the left toolbar: lines (trend, ray, extended, arrow, horizontal, horizontal ray, vertical, cross), channels (parallel, regression ±2σ, Andrews pitchfork), Fibonacci and Gann (retracement, extension, fan, time zones, Gann fan), shapes (rectangle, ellipse, triangle), measuring (measure, price range, date range, long/short position with risk : reward, anchored VWAP) and text. Select a drawing and drag its handles to adjust it. Drawings are saved per symbol and survive timeframe changes.
 - **Paper trading** — a practice account with virtual cash (100,000 to start, resettable) in the **Paper** tab of the side panel. Buy, sell and short the charted symbol with market, limit and stop orders; see positions, average cost, realized and unrealized P&L and the trade history; average cost and working orders are drawn on the chart. Nothing is sent to a broker. Orders fill at the latest price the app has (also when the market is closed), limit and stop orders are checked about every 20 seconds while the app is open, there is no borrowing, no fees, and no currency conversion.
@@ -36,7 +36,7 @@ A trading screening app: local charting and stock screening in the browser (the 
 | Order | Source | Covers |
 |---|---|---|
 | Crypto | Binance, then Coinbase (straight from the browser) | Crypto priced in USD, all timeframes |
-| 1 | **Investerview data proxy** — a small Cloudflare Worker ([`worker/`](worker/README.md)) that asks Yahoo Finance, then Nasdaq, then Tencent on the page's behalf | Everything the desktop app shows, including intraday, FX, futures and symbol search |
+| 1 | **InvestorView data proxy** — a small Cloudflare Worker ([`worker/`](worker/README.md)) that asks Yahoo Finance, then Nasdaq, then Tencent on the page's behalf | Everything the desktop app shows, including intraday, FX, futures and symbol search |
 | 2 | Tencent Finance (straight from the browser) | US stocks and ETFs, S&P 500 / Dow / Nasdaq / Hang Seng, Hong Kong and China A-shares; daily, weekly, monthly |
 | 3 | Yahoo Finance through the public AllOrigins proxy | Everything, but slow and often unavailable |
 
@@ -77,7 +77,7 @@ To give the app to someone who doesn't have Node.js, build a single-file executa
 npm run build
 ```
 
-This writes `dist/Investerview.exe` (about 80 MB — it contains the Node runtime). The build downloads one helper tool, [postject](https://github.com/nodejs/postject), through `npx`. Double-clicking the exe starts the app and opens it in the default browser; closing its console window stops it.
+This writes `dist/InvestorView.exe` (about 80 MB — it contains the Node runtime). The build downloads one helper tool, [postject](https://github.com/nodejs/postject), through `npx`. The build also downloads [rcedit](https://github.com/electron/rcedit) through `npm` to give the exe its icon and name. Double-clicking the exe opens the app in a window of its own, with no console and no browser tab; closing the window stops the app. The window is Microsoft Edge (part of Windows) or Chrome in app mode, with its own browser profile. If neither is installed, or with `--browser`, the app opens in the default browser instead and stops by itself ten minutes after the page is closed.
 
 The exe is not code-signed, so Windows SmartScreen will warn the first time it runs ("More info" → "Run anyway").
 
@@ -91,7 +91,7 @@ Start it with `--mcp` (it then talks over stdin/stdout and does not open the web
 {
   "mcpServers": {
     "investerview": {
-      "command": "C:\\path\\to\\Investerview.exe",
+      "command": "C:\\path\\to\\InvestorView.exe",
       "args": ["--mcp"]
     }
   }
@@ -111,7 +111,7 @@ Running from source instead: `"command": "node", "args": ["C:\\path\\to\\server.
 | `get_drawings` | Your saved drawings: lines, price levels, channels, positions, text notes and Fibonacci levels |
 | `get_alerts` | Your price alerts: the ones still waiting and the ones that triggered |
 
-There is also a ready-made prompt, `watchlist_report`. Or just ask: "write a morning report on my Investerview watchlist".
+There is also a ready-made prompt, `watchlist_report`. Or just ask: "write a morning report on my InvestorView watchlist".
 
 The watchlist and drawings tools read the data file described below, so open the desktop app at least once first.
 
@@ -192,7 +192,7 @@ The app connects to Yahoo directly. It does not use a proxy configured only in y
 
 ```
 server.js            local web server + market-data proxy + MCP server (no dependencies)
-build-exe.js         builds dist/Investerview.exe
+build-exe.js         builds dist/InvestorView.exe
 public/index.html    page markup
 public/app.js        charts, indicators, drawings, watchlist, screener
 public/i18n.js       interface translations
