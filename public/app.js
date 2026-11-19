@@ -109,7 +109,7 @@ const state = {
   scale: store.get('scale', store.get('log', false) ? 1 : 0), // price scale: 0 regular, 1 log, 2 percent, 3 indexed to 100
   compare: store.get('compare', []), // other symbols drawn as lines on the chart
   raw: [], // bars as loaded; state.data is what the chart shows (Renko bricks in the Renko chart)
-  ext: store.get('ext', false),
+  ext: !WEB, // pre-market and after-hours prices are always shown in the desktop app
   extRuns: [],
   indicators: store.get('indicators', store.shared('indicators', [{ id: 1, type: 'SMA', period: 50 }, { id: 2, type: 'SMA', period: 200 }, { id: 3, type: 'VOL' }])),
   alerts: store.get('alerts', []), // price alerts: { id, sym, op: 'above' | 'below', price, time, hit, hitPrice }
@@ -721,8 +721,6 @@ $('#theme').addEventListener('click', () => {
 });
 sysLight.addEventListener('change', () => { if (!theme) applyTheme(true); });
 applyTheme(false);
-$('#ext').checked = state.ext;
-$('#ext').addEventListener('change', (e) => { state.ext = e.target.checked; store.set('ext', state.ext); load(); refreshWatch(); });
 $('#refresh').addEventListener('click', async (e) => {
   const b = e.currentTarget;
   if (b.classList.contains('busy')) return;
@@ -904,9 +902,32 @@ const verEl = el('a', { id: 'ver', href: RELEASES, target: '_blank', rel: 'noope
 api('/api/version').then((v) => {
   verEl.textContent = 'v' + v.version; verEl.href = RELEASES + '/tag/v' + v.version;
   verEl.title = 'InvestorView ' + v.version + (WEB ? ' (web)' : '') + ' – ' + t('release notes on GitHub');
+  if (WEB || EMBED) return; // the web version is always the latest one
+  checkUpdate(v.version); setInterval(() => checkUpdate(v.version), 3600000); // the window may stay open for days
 }).catch(() => {});
+// Desktop app: asks GitHub for the latest release number at most once a day and, if it is newer, turns the version
+// label into a link to that release. Nothing is downloaded or installed, and a failed check changes nothing.
+const RELEASE_API = 'https://api.github.com/repos/RockAlter/Investerview/releases/latest';
+function isNewer(a, b) { // a, b: "1.2.3"
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+}
+async function checkUpdate(current) {
+  let c = store.get('updateCheck', null);
+  if (!c || typeof c.latest !== 'string' || !(Date.now() - c.at < 86400000)) {
+    try {
+      const r = await fetch(RELEASE_API, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(10000) });
+      const m = r.ok ? /^v?(\d+\.\d+\.\d+)$/.exec((await r.json()).tag_name || '') : null;
+      if (m) { c = { at: Date.now(), latest: m[1] }; store.set('updateCheck', c); }
+    } catch { /* offline or GitHub unavailable: keep what is known */ }
+  }
+  if (!c || !/^\d+\.\d+\.\d+$/.test(String(c.latest)) || !isNewer(c.latest, current)) return;
+  verEl.textContent = '↑ v' + c.latest; verEl.classList.add('new'); verEl.href = RELEASES + '/tag/v' + c.latest;
+  verEl.title = t('Version {0} is available (you have {1}). Click to open the download page.', c.latest, current);
+}
 if (WEB) { // no local server: hide what needs one, and say so
-  $('#sideTabs [data-side=pos]').hidden = true; $('#ext').closest('label').hidden = true; $('#impWatch').hidden = true;
+  $('#sideTabs [data-side=pos]').hidden = true; $('#impWatch').hidden = true;
   const note = $('#webNote'); note.hidden = false; note.href = window.WebData.DOWNLOAD;
   note.textContent = t('Web version'); note.title = t('Prices can be delayed, and intraday, FX and futures charts depend on the data proxy being reachable. IBKR positions and the saved data file need the desktop app: click to download it. Your watchlist here is kept in this browser only.');
 }
