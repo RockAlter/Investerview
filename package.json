@@ -1,6 +1,6 @@
 {
   "name": "investorview",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Local charting and stock-screening app",
   "private": true,
   "main": "server.js",

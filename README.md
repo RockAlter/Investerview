@@ -64,6 +64,7 @@ The source in use is shown in the legend line above the chart.
 Other things to know about the web version:
 
 - Prices from the backup sources can differ slightly from Yahoo's (crypto comes from one exchange; adjustments for dividends differ), and backup sources show the ticker instead of the company name.
+- **On a phone** the page shows one thing at a time, picked in a tab bar at the bottom: chart, watchlist, alerts, paper account or screener. The top bar keeps search, refresh and timeframes, with the other chart settings behind **⋯**. Press and hold where you would right-click. On an iPhone, Safari's Share → **Add to Home Screen** opens it full screen like an app.
 - The web version is the `public/` folder published to the `gh-pages` branch; `public/web-data.js` is its data layer, and `PROXY_URL` at its top is the data proxy's address.
 
 ## Run it

@@ -30,6 +30,7 @@ let syncReady = false, pushTimer = 0;
 // Web version (opened from a website such as GitHub Pages, not from the desktop app): there is no
 // local server, so web-data.js fetches prices in the browser, through the data proxy (worker/) and
 // the other sources it switches between. IBKR positions and the saved data file need the desktop app.
+const TOUCH = window.matchMedia('(hover: none) and (pointer: coarse)').matches; // phone or tablet: press and hold instead of right-click
 const WEB = !!window.WebData && (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || new URLSearchParams(location.search).has('web'));
 function pushState() {
   if (!syncReady || WEB || EMBED) return;
@@ -675,6 +676,7 @@ function setSymbol(sym, main) {
   selected = null; draft = null;
   $('#sym').value = '';
   setView('chart'); renderWatch(); load();
+  if (PHONE && !main) setPhoneView('chart'); // a symbol tapped in a list: show its chart (searches inside a tab stay there)
 }
 
 // ---------------------------------------------------------------- top bar
@@ -1479,7 +1481,7 @@ function openWatchAdd() {
   for (const sec of ['', ...secs]) wAddSel.append(el('option', { value: sec, textContent: sectionLabel(sec), selected: sec === def }));
   wAddSel.disabled = !secs.length;
   wAddChart.textContent = '+ ' + t('Add {0} (on the chart)', state.symbol);
-  wAddNote.textContent = t('Tip: right-click a symbol in the list to move it to another section.');
+  wAddNote.textContent = TOUCH ? t('Tip: press and hold a symbol in the list to move it to another section.') : t('Tip: right-click a symbol in the list to move it to another section.');
   wAdd.hidden = false; wAdd.querySelector('input').focus();
 }
 wAddChart.addEventListener('click', () => wAddDo(state.symbol));
@@ -2119,7 +2121,8 @@ function buildAlerts() {
     el('div', { className: 'ticket' }, symbolSearch((sym) => { alertNote = ''; setSymbol(sym, true); renderAlerts(); }),
       el('div', { className: 'trow head' }, ui.sym, ui.last), el('div', { className: 'trow' }, ui.type), el('div', { className: 'trow' }, ui.price, ui.add), ui.note),
     el('h4', { textContent: t('Waiting') }), ui.wait, el('h4', {}, t('Triggered'), ui.clear), ui.done,
-    el('p', { className: 'pfoot', textContent: t('Alerts are checked about every 20 seconds, and only while this app is open. When one triggers you get a message here, a sound and, if turned on, a Windows notification. Right-click the chart to add an alert at that price, or right-click a trend line or horizontal line you drew to be alerted when the price crosses it. Change % and RSI use daily figures.') }));
+    el('p', { className: 'pfoot', textContent: t('Alerts are checked about every 20 seconds, and only while this app is open. When one triggers you get a message here, a sound and, if turned on, a Windows notification. Right-click the chart to add an alert at that price, or right-click a trend line or horizontal line you drew to be alerted when the price crosses it. Change % and RSI use daily figures.') }),
+    TOUCH ? el('p', { className: 'pfoot', textContent: t('On a touch screen, press and hold where you would right-click. On a phone, alerts are only checked while this page is open in front.') }) : null);
   return ui;
 }
 function renderAlerts() {
@@ -2186,8 +2189,8 @@ let layout = String(store.get('layout', '1')), activePane = 0; // activePane: 0 
 function setActive(i) { activePane = i; [...multi.children].forEach((c, k) => c.classList.toggle('active', k === i)); }
 function applyLayout() {
   if (!LAYOUTS[layout] || EMBED) layout = '1';
-  const n = LAYOUTS[layout];
-  multi.dataset.layout = layout; $('#layout').value = layout;
+  const shown = PHONE ? '1' : layout, n = LAYOUTS[shown]; // a phone shows one chart; the saved layout returns on a wider screen
+  multi.dataset.layout = shown; $('#layout').value = layout;
   while (frames.length > n - 1) frames.pop().parentNode.remove();
   while (frames.length < n - 1) {
     const f = el('iframe', { src: location.pathname + '?pane=' + (frames.length + 1) + (new URLSearchParams(location.search).has('web') ? '&web' : ''), title: t('Chart') + ' ' + (frames.length + 2) });
@@ -2210,8 +2213,78 @@ function setView(v) {
   $('#chartView').hidden = v !== 'chart'; $('#screenView').hidden = v !== 'screener';
   for (const b of $('#views').children) b.classList.toggle('on', b.dataset.view === v);
   if (v === 'screener' && !rows.length) scan();
+  if (PHONE) markPhoneNav();
 }
 for (const b of $('#views').children) b.addEventListener('click', () => setView(b.dataset.view));
+
+// ---------------------------------------------------------------- phones
+// On a phone-sized screen (html.phone, see style.css) the page shows one thing at a time: the chart, one side tab or the
+// screener, picked in a tab bar at the bottom. The top bar keeps search, refresh and timeframes; the rest is behind "⋯".
+const phoneMQ = window.matchMedia('(max-width: 700px), (max-height: 500px) and (pointer: coarse)');
+let PHONE = false, pv = 'chart'; // pv: chart | watch | pos | paper | alerts | screener
+const NAV_ICONS = {
+  chart: '<path d="M4 15l4-5 3 3 5-7"/><path d="M3 17h14"/>',
+  watch: '<path d="M4 5h12M4 10h12M4 15h12"/>',
+  pos: '<rect x="3.5" y="5.5" width="13" height="10" rx="1.5"/><path d="M3.5 9h13"/>',
+  paper: '<path d="M10 3v14M13.5 6.5c-.6-1.2-1.9-2-3.5-2-2 0-3.5 1.1-3.5 2.6 0 3.6 7 1.9 7 5.6 0 1.5-1.5 2.6-3.5 2.6-1.7 0-3-.8-3.6-2"/>',
+  alerts: '<path d="M6 13V9a4 4 0 018 0v4l1.5 2h-11zM8.5 17h3"/>',
+  screener: '<path d="M3 5h14l-5.5 6.5V16l-3 1.5v-6z"/>',
+};
+const NAV = [['chart', 'Chart'], ['watch', 'Watchlist'], ...(WEB ? [] : [['pos', 'IBKR']]), ['alerts', 'Alerts'], ['paper', 'Paper'], ['screener', 'Screener']];
+const phoneNav = $('#phoneNav');
+for (const [v, label] of NAV) {
+  const b = el('button', { innerHTML: `<svg viewBox="0 0 20 20">${NAV_ICONS[v]}</svg>` }, el('span', { textContent: t(label) }));
+  b.dataset.pv = v;
+  b.addEventListener('click', () => setPhoneView(v));
+  phoneNav.append(b);
+}
+function markPhoneNav() {
+  if (state.view === 'screener') pv = 'screener'; else if (pv === 'screener') pv = 'chart';
+  document.documentElement.dataset.pv = pv;
+  for (const b of phoneNav.children) b.classList.toggle('on', b.dataset.pv === pv);
+}
+function setPhoneView(v) {
+  pv = v; $('#top').classList.remove('more');
+  if (v === 'screener') setView('screener');
+  else {
+    setView('chart');
+    const tab = v !== 'chart' && $(`#sideTabs [data-side="${v}"]`);
+    if (tab && side !== v) tab.click();
+  }
+  markPhoneNav();
+}
+function applyPhone() {
+  const was = PHONE;
+  PHONE = phoneMQ.matches && !EMBED;
+  document.documentElement.classList.toggle('phone', PHONE);
+  phoneNav.hidden = !PHONE; $('#more').hidden = !PHONE;
+  if (PHONE) setPhoneView(state.view === 'screener' ? 'screener' : pv);
+  else { delete document.documentElement.dataset.pv; $('#top').classList.remove('more'); }
+  if (was !== PHONE && state.ready) applyLayout(); // back to the saved multi-chart layout on a wider screen
+}
+$('#more').addEventListener('click', (e) => { e.stopPropagation(); $('#top').classList.toggle('more'); });
+document.addEventListener('click', (e) => { if (!$('#top').contains(e.target) && !e.target.closest('#indMenu, #cmpBox')) $('#top').classList.remove('more'); });
+$('#fToggle').addEventListener('click', () => $('#screenView').classList.toggle('showF')); // phone: the screener's filters fold away
+phoneMQ.addEventListener('change', applyPhone);
+applyPhone();
+// Touch screens have no right-click: holding a finger still for half a second opens the same menu
+// (chart: alert at that price or on a drawn line; watchlist: move to a section).
+function longPress(area) {
+  let timer = 0, x = 0, y = 0, fired = false;
+  area.addEventListener('touchstart', (e) => {
+    fired = false; clearTimeout(timer);
+    if (e.touches.length !== 1) return;
+    const p = e.touches[0], target = e.target; x = p.clientX; y = p.clientY;
+    timer = setTimeout(() => {
+      fired = true;
+      target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+    }, 550);
+  }, { passive: true });
+  area.addEventListener('touchmove', (e) => { const p = e.touches[0]; if (p && Math.hypot(p.clientX - x, p.clientY - y) > 10) clearTimeout(timer); }, { passive: true });
+  area.addEventListener('touchend', (e) => { clearTimeout(timer); if (fired) e.preventDefault(); }, { passive: false }); // no click after a long press: it would close the menu
+  area.addEventListener('touchcancel', () => clearTimeout(timer));
+}
+longPress(stage); longPress($('#wlist'));
 
 if (!LW) showMsg(t('Could not load the charting library (needs an internet connection). Reload to retry.'));
 else (EMBED ? Promise.resolve() : pullState()).then(() => {
@@ -2229,7 +2302,7 @@ else (EMBED ? Promise.resolve() : pullState()).then(() => {
       }
     } catch { /* storage blocked: not counted */ }
   }
-  applyLayout(); refreshWatch(); refreshIb();
+  state.ready = true; applyLayout(); refreshWatch(); refreshIb();
   setInterval(() => { if (!document.hidden) refreshWatch(); }, 60000);
   // working orders and waiting alerts are checked even in a background tab
   paperTick(); setInterval(() => { if ((paperLeader && (state.paper.orders.length || state.alerts.some((a) => !a.hit))) || ((side === 'paper' || side === 'alerts') && !document.hidden)) paperTick(); }, 20000);

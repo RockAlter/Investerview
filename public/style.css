@@ -300,6 +300,102 @@ html.embed .seg button { padding: 5px 6px; }
 :root[data-theme=light] #cmpBox { box-shadow: 0 10px 30px rgba(20,30,50,.18); }
 #stage.grab, #stage.grab * { cursor: grabbing !important; }
 
+/* touch: drawing on the chart must not scroll the page; a long press must not select text or open the iOS callout */
+#draw.active { touch-action: none; }
+#stage, #wlist, #phoneNav { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+@media (hover: none) { #wlist .rm { visibility: visible; opacity: .55; } }
+
+/* ---------------------------------------------------------------- phones (html.phone is set in app.js)
+   One thing at a time: chart, a side tab or the screener, picked in the tab bar at the bottom (#phoneNav).
+   The top bar keeps search, refresh and timeframes; the other controls open with "⋯" (#top.more).
+   env(safe-area-inset-*) keeps clear of the iPhone's notch / Dynamic Island and home indicator. */
+html.phone, html.phone body { height: 100%; height: 100dvh; }
+html.phone body { grid-template-rows: auto minmax(0, 1fr) auto; font-size: 14px; }
+html.phone input, html.phone select, html.phone textarea { font-size: 16px; } /* below 16px iOS zooms the page when a box gets focus */
+html.phone #top { position: relative; flex-wrap: wrap; gap: 6px; overflow: visible; min-height: 0;
+  padding: calc(6px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 6px calc(8px + env(safe-area-inset-left)); }
+html.phone #top > * { display: none; order: 9; }
+html.phone #top > .search { display: block; order: 1; flex: 1 1 auto; min-width: 0; }
+html.phone #top > #refresh, html.phone #top > #more { display: block; order: 2; min-width: 40px; min-height: 38px; font-size: 17px; padding: 0 10px; }
+html.phone #top > #more { order: 3; }
+html.phone #top > #tfs { display: flex; order: 4; flex: 1 0 100%; }
+html.phone #tfs button { flex: 1; min-height: 34px; padding: 4px 0; }
+html.phone .search input { min-height: 38px; }
+html.phone #top.more > #type, html.phone #top.more > .menu, html.phone #top.more > #scale, html.phone #top.more > #lang,
+html.phone #top.more > #theme, html.phone #top.more > #webNote { display: block; }
+html.phone #top.more > :is(#type, .menu, #scale, #lang, #theme, #webNote) { order: 5; }
+html.phone #top.more > :is(#type, #scale, #lang) { flex: 1 1 40%; min-width: 0; min-height: 38px; }
+html.phone #top.more .menu > button, html.phone #top.more > #theme { min-height: 38px; }
+html.phone #top.more > #webNote { align-self: center; padding: 3px 8px; }
+html.phone .menu { position: static; } /* so the indicator list and compare box span the screen */
+html.phone #indMenu, html.phone #cmpBox, html.phone #results { left: 8px; right: 8px; width: auto; min-width: 0; max-height: 60vh; overflow-y: auto; }
+html.phone .search { position: static; }
+html.phone #results li { padding: 9px 8px; }
+html.phone #indMenu li { padding: 9px 8px; }
+#more { padding: 5px 9px; }
+
+html.phone #chartView, html.phone #screenView { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+html.phone #chartView { grid-template-columns: 40px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+html.phone #tools { min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; } /* a short (landscape) screen scrolls the toolbar */
+html.phone #tools button { width: 34px; height: 34px; flex: 0 0 auto; }
+html.phone #fly { left: 40px; }
+html.phone #fly li { padding: 9px 12px 9px 10px; }
+html.phone #legend { left: 8px; right: 64px; top: 6px; }
+html.phone #lgName { display: none; }
+html.phone #lgOhlc { font-size: 12px; }
+html.phone .chip { font-size: 11px; }
+html.phone .chip input { font-size: 16px; width: 44px; height: 22px; transform: scale(.75); transform-origin: left center; margin-right: -11px; }
+/* a side tab fills the screen instead of the chart */
+html.phone[data-pv="watch"] #chartView, html.phone[data-pv="pos"] #chartView,
+html.phone[data-pv="paper"] #chartView, html.phone[data-pv="alerts"] #chartView { grid-template-columns: minmax(0, 1fr); }
+html.phone[data-pv="watch"] :is(#tools, #multi), html.phone[data-pv="pos"] :is(#tools, #multi),
+html.phone[data-pv="paper"] :is(#tools, #multi), html.phone[data-pv="alerts"] :is(#tools, #multi) { display: none; }
+html.phone #watch { display: none; border-left: 0; }
+html.phone:not([data-pv="chart"]) #watch { display: flex; }
+html.phone #sideTabs { display: none !important; }
+html.phone .whead { padding: 10px 12px; }
+html.phone .whead button { min-height: 34px; padding: 4px 10px; font-size: 14px; }
+html.phone #wlist li { grid-template-columns: minmax(0, 1fr) auto auto auto 30px; padding: 10px 4px 10px 12px; }
+html.phone #wlist li.sec { grid-template-columns: 1fr 30px 30px 30px; padding: 8px 4px 8px 12px; font-size: 12px; }
+html.phone #wlist .rm { font-size: 15px; min-height: 28px; }
+html.phone #wAdd > button, html.phone .ticket button, html.phone .ibhead button { min-height: 36px; }
+html.phone #sideAlerts, html.phone #sidePaper, html.phone #sidePos { padding: 12px; }
+html.phone .ibrow { padding: 10px 6px; }
+html.phone .ibrow .mini { min-height: 30px; min-width: 30px; }
+
+/* bottom tab bar */
+#phoneNav { display: flex; background: var(--panel); border-top: 1px solid var(--border);
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+#phoneNav button { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0 5px;
+  border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 10.5px; }
+#phoneNav button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+#phoneNav svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+#phoneNav button.on { color: var(--accent); }
+
+/* screener on a phone: tighter bars; the table scrolls sideways */
+html.phone .sbar, html.phone .filters { padding: 8px 10px; gap: 6px 10px; }
+html.phone .filters input[type=number] { width: 64px; }
+html.phone #uniCustom { min-width: 0; flex-basis: 100%; }
+html.phone .sbar button { min-height: 36px; }
+#fToggle { display: none; }
+html.phone #fToggle { display: block; }
+html.phone #screenView:not(.showF) .filters { display: none; }
+html.phone #grid th, html.phone #grid td { padding: 8px; }
+
+/* menus and messages */
+html.phone #ctx li { padding: 11px 14px; }
+html.phone #toasts { left: 8px; right: 8px; max-width: none; bottom: calc(64px + env(safe-area-inset-bottom)); }
+html.phone #hint { bottom: 12px; max-width: calc(100% - 20px); white-space: normal; text-align: center; }
+html.phone dialog { width: calc(100vw - 24px); }
+/* landscape phone: little height, so a one-row top bar and a slimmer tab bar */
+@media (orientation: landscape) {
+  html.phone #top > #tfs { flex: 0 1 auto; order: 2; }
+  html.phone #tfs button { padding: 4px 8px; }
+  html.phone #phoneNav button { flex-direction: row; justify-content: center; gap: 6px; padding: 5px 0; min-height: 40px; font-size: 12px; }
+  html.phone #phoneNav svg { width: 18px; height: 18px; }
+  html.phone #toasts { bottom: calc(44px + env(safe-area-inset-bottom)); }
+}
+
 /* practice account: equity curve and statistics */
 .eqcurve { display: block; width: 100%; height: 84px; margin: 4px 0 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .bysym { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; margin-top: 6px; }
