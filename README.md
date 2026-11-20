@@ -12,7 +12,14 @@ A trading screening app: local charting and stock screening in the browser. It r
 - **Charts** — 13 chart types: candles, hollow candles, Heikin Ashi, bars, HLC bars, high-low, line, line with markers, step line, area, baseline, columns and Renko (brick size = 14-bar ATR); timeframes from 1 minute to 1 month; regular, log, percent and indexed-to-100 price scales.
 - **Compare** — add up to 4 other symbols to the chart as lines (for example NVDA against SPY). Each line starts at the charted symbol's price at the left edge of the screen, so the lines show which one moved more since then.
 - **Multi-chart layout** — show 1, 2 (side by side or stacked) or 4 charts at once. Each chart has its own symbol, timeframe, chart type and indicators; drawings are shared. Click a chart, then a watchlist symbol, to load it there.
-- **Price alerts** — in the **Alerts** tab, or by right-clicking the chart, set a price for a symbol. When the price gets there the app shows a message, plays a sound and (if you allow it) a Windows notification, and the alert is drawn on the chart as a line. Alerts are checked about every 20 seconds and only while the app is open.
+- **Alerts** — in the **Alerts** tab, set an alert for a symbol when:
+  - the price reaches a level (or right-click the chart at that price; the alert is drawn on the chart as a line you can drag);
+  - it is up or down a given percentage today;
+  - its daily RSI (14) rises above or falls below a level;
+  - the price crosses its 50- or 200-day average;
+  - the price crosses a trend line or horizontal line you drew: right-click the line and choose "Alert when the price crosses this line". The line is followed into the future on the timeframe it was drawn on.
+
+  When an alert triggers the app shows a message, plays a sound and (if you allow it) a Windows notification. Alerts are checked about every 20 seconds and only while the app is open.
 - **Volume profile** — in the Indicators list: a sideways histogram at the right edge of the chart showing how much volume traded at each price among the bars on screen (green = rising bars, red = falling), with the busiest price (POC) marked.
 - **Paper account performance** — the Paper tab draws the account value over time and shows max drawdown, win rate, average win and loss, profit factor, best and worst trade, and realized P&L per symbol.
 - **Visit counter (web version only)** — the web page reports each visit to the data proxy, which keeps anonymous daily totals: visits, visitors, new visitors and a count per country. No IP address, cookie or identifier is stored. The desktop app reports nothing.
@@ -23,7 +30,7 @@ A trading screening app: local charting and stock screening in the browser. It r
 - **Indicators** — 25 in all. On the price chart: SMA, EMA, WMA, linear regression line, VWAP, Bollinger Bands, Donchian and Keltner channels, Supertrend, Parabolic SAR, volume. Below it: RSI, MACD, Stochastic, CCI, Williams %R, MFI, ADX/DMI, ATR, standard deviation, ROC, momentum, OBV. Periods are editable.
 - **Drawing tools** — 25, grouped in the left toolbar: lines (trend, ray, extended, arrow, horizontal, horizontal ray, vertical, cross), channels (parallel, regression ±2σ, Andrews pitchfork), Fibonacci and Gann (retracement, extension, fan, time zones, Gann fan), shapes (rectangle, ellipse, triangle), measuring (measure, price range, date range, long/short position with risk : reward, anchored VWAP) and text. Select a drawing and drag its handles to adjust it. Drawings are saved per symbol and survive timeframe changes.
 - **Paper trading** — a practice account with virtual cash (100,000 to start, resettable) in the **Paper** tab of the side panel. Buy, sell and short the charted symbol with market, limit and stop orders; see positions, average cost, realized and unrealized P&L and the trade history; average cost and working orders are drawn on the chart. Nothing is sent to a broker. Orders fill at the latest price the app has (also when the market is closed), limit and stop orders are checked about every 20 seconds while the app is open, there is no borrowing, no fees, and no currency conversion.
-- **Watchlist** — sections, drag-to-reorder, live last price and daily change.
+- **Watchlist** — sections, drag-to-reorder, live last price and daily change. **+ Add** searches any symbol and puts it in the section you pick; the **+** on a section heading adds the charted symbol there; right-click a symbol to move it to another section.
 - **Import** — reads a watchlist exported from TradingView (`EXCHANGE:SYMBOL` text, including `###Section` headings) and converts the symbols.
 - **Screener** — scan US large caps, ETFs, crypto, FX/commodities, Japan large caps, your watchlist or a custom list; filter by price, change %, RSI, relative volume, distance from 52-week high and position against the 50/200-day averages.
 
@@ -109,7 +116,7 @@ Running from source instead: `"command": "node", "args": ["C:\\path\\to\\server.
 | `run_screener` | A built-in universe, your watchlist or a custom list, filtered and sorted |
 | `get_watchlist` | Your watchlist by section, with quotes |
 | `get_drawings` | Your saved drawings: lines, price levels, channels, positions, text notes and Fibonacci levels |
-| `get_alerts` | Your price alerts: the ones still waiting and the ones that triggered |
+| `get_alerts` | Your alerts (price, daily change, RSI, moving average, drawn line): the ones still waiting and the ones that triggered |
 
 There is also a ready-made prompt, `watchlist_report`. Or just ask: "write a morning report on my InvestorView watchlist".
 

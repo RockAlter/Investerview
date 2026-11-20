@@ -444,10 +444,26 @@ function cleanState(s) {
     .map((i) => (isNum(i.period) ? { id: i.id, type: i.type, period: i.period } : { id: i.id, type: i.type }));
   const out = { watch: str(s.watch, 200), collapsed: str(s.collapsed, 100), drawings, indicators, updated: Date.now() };
   const paper = cleanPaper(s.paper); if (paper) out.paper = paper;
-  // price alerts: waiting ones, and the last ones that triggered (hit = when, hitPrice = at what price)
-  out.alerts = (Array.isArray(s.alerts) ? s.alerts : []).filter((a) => a && SYMBOL_RE.test(a.sym) && (a.op === 'above' || a.op === 'below') && isNum(a.price) && a.price > 0).slice(-150)
-    .map((a) => ({ id: isNum(a.id) ? a.id : 0, sym: a.sym, op: a.op, price: a.price, time: isNum(a.time) ? a.time : 0, hit: isNum(a.hit) ? a.hit : 0, hitPrice: isNum(a.hitPrice) ? a.hitPrice : 0 }));
+  // alerts: waiting ones, and the last ones that triggered (hit = when, hitPrice = at what price)
+  out.alerts = (Array.isArray(s.alerts) ? s.alerts : []).map(cleanAlert).filter(Boolean).slice(-150);
   return out;
+}
+const LINE_ALERT_TYPES = new Set(['trend', 'ray', 'extline', 'arrow', 'hline', 'hray']);
+// One alert; its kind decides which fields it needs (see checkAlerts in public/app.js). Alerts saved before 2.2 have no kind: price.
+function cleanAlert(a) {
+  if (!a || !SYMBOL_RE.test(a.sym) || (a.op !== 'above' && a.op !== 'below')) return null;
+  const kind = a.kind || 'price', o = { id: isNum(a.id) ? a.id : 0, sym: a.sym, kind, op: a.op, time: isNum(a.time) ? a.time : 0, hit: isNum(a.hit) ? a.hit : 0, hitPrice: isNum(a.hitPrice) ? a.hitPrice : 0 };
+  if (kind === 'price') { if (!isNum(a.price) || a.price <= 0) return null; o.price = a.price; }
+  else if (kind === 'pct') { if (!isNum(a.value) || !a.value || Math.abs(a.value) > 1000) return null; o.value = a.value; }
+  else if (kind === 'rsi') { if (!isNum(a.value) || a.value <= 0 || a.value >= 100) return null; o.value = a.value; }
+  else if (kind === 'ma') { if (a.period !== 50 && a.period !== 200) return null; o.period = a.period; }
+  else if (kind === 'line') {
+    if (!LINE_ALERT_TYPES.has(a.lt) || !Object.prototype.hasOwnProperty.call(TF, a.tf) || !isPoint(a.a) || !isPoint(a.b)) return null;
+    Object.assign(o, { lt: a.lt, tf: a.tf, a: { time: a.a.time, price: a.a.price }, b: { time: a.b.time, price: a.b.price } });
+  } else return null;
+  if (isNum(a.hitValue)) o.hitValue = a.hitValue;
+  if (isNum(a.hitLevel)) o.hitLevel = a.hitLevel;
+  return o;
 }
 function readBody(req, max) {
   return new Promise((resolve, reject) => {
@@ -567,7 +583,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '2.1.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '2.2.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',
@@ -746,15 +762,26 @@ const MCP_TOOLS = [
   },
   {
     name: 'get_alerts',
-    description: 'Price alerts the user set in the InvestorView app: the ones still waiting (symbol, direction, price) and the ones that already triggered (with when and at what price). The app checks alerts only while it is open, so a waiting alert may already have been passed. Read-only: alerts are created in the app.',
+    description: 'Alerts the user set in the InvestorView app: the ones still waiting and the ones that already triggered (with when and at what price). Kinds: a price level, a daily change in percent, the daily RSI(14), the price crossing its 50- or 200-day average, and the price crossing a trend line or horizontal line drawn on the chart. The app checks alerts only while it is open, so a waiting alert may already have been passed. Read-only: alerts are created in the app.',
     inputSchema: { type: 'object', properties: { symbol: symProp } },
     run: async (a) => {
       const s = readState();
       if (!s) throw new Error(NO_STATE);
       const want = a.symbol ? needSymbol(a.symbol) : null, iso = (sec) => (sec ? new Date(sec * 1000).toISOString() : null);
       const all = (Array.isArray(s.alerts) ? s.alerts : []).filter((x) => !want || x.sym === want);
-      const row = (x) => ({ symbol: x.sym, condition: x.op === 'above' ? 'price rises to' : 'price falls to', price: x.price, created: iso(x.time) });
-      return { waiting: all.filter((x) => !x.hit).map(row), triggered: all.filter((x) => x.hit).map((x) => ({ ...row(x), triggered: iso(x.hit), price_when_triggered: x.hitPrice })) };
+      const up = (x) => x.op === 'above';
+      const row = (x) => {
+        const k = x.kind || 'price', r = { symbol: x.sym, kind: k };
+        if (k === 'price') Object.assign(r, { condition: up(x) ? 'price rises to' : 'price falls to', price: x.price });
+        else if (k === 'pct') Object.assign(r, { condition: up(x) ? 'daily change rises to (%)' : 'daily change falls to (%)', value: x.value });
+        else if (k === 'rsi') Object.assign(r, { condition: up(x) ? 'daily RSI(14) rises above' : 'daily RSI(14) falls below', value: x.value });
+        else if (k === 'ma') Object.assign(r, { condition: `price crosses ${up(x) ? 'above' : 'below'} its ${x.period}-day average` });
+        else if (k === 'line') Object.assign(r, { condition: `price crosses ${up(x) ? 'above' : 'below'} a ${x.lt === 'hline' || x.lt === 'hray' ? 'horizontal' : 'trend'} line drawn on the ${x.tf} chart`,
+          line: { from: { date: iso(x.a.time), price: x.a.price }, to: { date: iso(x.b.time), price: x.b.price } } });
+        r.created = iso(x.time);
+        return r;
+      };
+      return { waiting: all.filter((x) => !x.hit).map(row), triggered: all.filter((x) => x.hit).map((x) => ({ ...row(x), triggered: iso(x.hit), price_when_triggered: x.hitPrice, ...(x.hitValue != null && (x.kind === 'pct' || x.kind === 'rsi') ? { value_when_triggered: x.hitValue } : {}) })) };
     },
   },
 ];
