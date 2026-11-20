@@ -112,7 +112,7 @@ const state = {
   ext: !WEB, // pre-market and after-hours prices are always shown in the desktop app
   extRuns: [],
   indicators: store.get('indicators', store.shared('indicators', [{ id: 1, type: 'SMA', period: 50 }, { id: 2, type: 'SMA', period: 200 }, { id: 3, type: 'VOL' }])),
-  alerts: store.get('alerts', []), // price alerts: { id, sym, op: 'above' | 'below', price, time, hit, hitPrice }
+  alerts: store.get('alerts', []), // { id, sym, kind, op: 'above' | 'below', price | value | period | line, time, hit, hitPrice }; see checkAlerts
   watch: store.get('watch', DEFAULT_WATCH),
   drawings: store.get('drawings', {}),
   paper: store.get('paper', null) || { start: 100000, cash: 100000, realized: 0, pos: {}, orders: [], trades: [] }, // practice account
@@ -1066,7 +1066,7 @@ stage.addEventListener('pointerdown', (e) => {
   if (EMBED || dragH || state.tool !== 'cursor' || e.button !== 0 || !S.main) return;
   const r = cv.getBoundingClientRect(), y = e.clientY - r.top, g = geom();
   if (!g || e.clientX - r.left > g.w || y > g.h) return;
-  const a = state.alerts.find((q) => { if (q.hit || q.sym !== state.symbol) return false; const ly = S.main.priceToCoordinate(q.price); return ly != null && Math.abs(ly - y) < 5; });
+  const a = state.alerts.find((q) => { if (q.hit || q.sym !== state.symbol || kindOf(q) !== 'price') return false; const ly = S.main.priceToCoordinate(q.price); return ly != null && Math.abs(ly - y) < 5; });
   if (!a) return;
   e.stopPropagation(); e.preventDefault(); dragA = a; stage.classList.add('grab');
 }, true);
@@ -1360,7 +1360,9 @@ function renderWatch() {
       } else {
         const ed = el('button', { className: 'rm', textContent: '✎', title: t('Rename') });
         ed.addEventListener('click', (e) => { e.stopPropagation(); renameI = i; renderWatch(); });
-        li = el('li', { className: 'sec', title: t('Click to collapse or expand · drag to move') }, el('span', { className: 'sn', textContent: (hide ? '▸ ' : '▾ ') + name }), ed, rm);
+        const add = el('button', { className: 'rm add', textContent: '+', title: t('Add {0} to this section', state.symbol) });
+        add.addEventListener('click', (e) => { e.stopPropagation(); addWatch(state.symbol, name); });
+        li = el('li', { className: 'sec', title: t('Click to collapse or expand · drag to move') }, el('span', { className: 'sn', textContent: (hide ? '▸ ' : '▾ ') + name }), add, ed, rm);
         li.addEventListener('click', () => { if (collapsed.has(name)) collapsed.delete(name); else collapsed.add(name); store.set('collapsed', [...collapsed]); renderWatch(); });
       }
     } else {
@@ -1377,6 +1379,8 @@ function renderWatch() {
         li.children[3].append(el('span', { className: 'x ' + cls(r.extChg), textContent: fmtPct(r.extChg), title: t('Change from the regular-session close') }));
       }
       li.addEventListener('click', () => setSymbol(s));
+      li.addEventListener('contextmenu', (e) => { e.preventDefault(); openWatchMenu(s, e); });
+      if (s === flashSym) { li.classList.add('flash'); requestAnimationFrame(() => li.scrollIntoView({ block: 'nearest' })); }
     }
     // drag to reorder, or to move a symbol under another heading
     li.draggable = i !== renameI;
@@ -1405,11 +1409,85 @@ async function refreshWatch(fresh = false) {
   }
   renderWatch();
 }
-function addWatch(sym) {
-  if (state.watch.includes(sym)) return;
-  state.watch.push(sym); saveWatch(); refreshWatch();
+// Sections are named by their heading; '' is the part of the list above the first heading.
+let flashSym = null, flashTimer = 0; // the symbol just added or moved: highlighted briefly and scrolled into view
+const watchSections = () => [...new Set(state.watch.filter(isSec).map((s) => s.slice(1)))];
+const sectionLabel = (sec) => sec || t('Top of the list (no section)');
+function sectionOf(sym) { // null when the symbol is not in the list
+  let sec = '';
+  for (const s of state.watch) { if (isSec(s)) sec = s.slice(1); else if (s === sym) return sec; }
+  return null;
 }
-$('#addWatch').addEventListener('click', () => addWatch(state.symbol));
+function defaultSection() { // the section last picked in the Add box; before that, the end of the list as it used to be
+  const secs = watchSections(), want = store.get('addTo', null);
+  if (want === '' || secs.includes(want)) return want;
+  return secs.length ? secs[secs.length - 1] : '';
+}
+// Puts sym at the end of section sec, taking it out of wherever it was. Returns 'added', 'moved' or 'there'.
+function addWatch(sym, sec = defaultSection()) {
+  sym = String(sym).toUpperCase();
+  if (sec && !state.watch.includes('#' + sec)) sec = '';
+  const was = sectionOf(sym);
+  if (was !== sec) {
+    if (was !== null) state.watch.splice(state.watch.indexOf(sym), 1);
+    const h = sec ? state.watch.indexOf('#' + sec) : -1;
+    let at = state.watch.findIndex((s, i) => i > h && isSec(s));
+    if (at < 0) at = state.watch.length;
+    state.watch.splice(at, 0, sym);
+    saveWatch();
+  }
+  if (sec && collapsed.has(sec)) { collapsed.delete(sec); store.set('collapsed', [...collapsed]); }
+  flashSym = sym; clearTimeout(flashTimer); flashTimer = setTimeout(() => { flashSym = null; }, 1600);
+  renderWatch(); if (was === null) refreshWatch();
+  return was === null ? 'added' : was === sec ? 'there' : 'moved';
+}
+// right-click a symbol in the list: move it to another section, or remove it
+function openWatchMenu(sym, e) {
+  const cur = sectionOf(sym), items = [el('li', { className: 'head', textContent: t('Move {0} to', sym) })];
+  for (const sec of ['', ...watchSections()]) {
+    if (sec === cur) continue;
+    const li = el('li', { textContent: '→ ' + sectionLabel(sec) });
+    li.addEventListener('click', () => addWatch(sym, sec));
+    items.push(li);
+  }
+  if (items.length === 1) items[0].textContent = t('Add a section to move symbols into it');
+  const rm = el('li', { className: 'danger', textContent: '✕ ' + t('Remove from watchlist') });
+  rm.addEventListener('click', () => { state.watch.splice(state.watch.indexOf(sym), 1); saveWatch(); renderWatch(); });
+  items.push(rm);
+  ctxMenu.textContent = ''; ctxMenu.append(...items); ctxMenu.hidden = false;
+  const r = ctxMenu.getBoundingClientRect();
+  ctxMenu.style.left = Math.max(4, Math.min(e.clientX, innerWidth - r.width - 8)) + 'px';
+  ctxMenu.style.top = Math.max(4, Math.min(e.clientY, innerHeight - r.height - 8)) + 'px';
+}
+// "+ Add": a box under the header to search any symbol (or take the charted one) and choose its section
+const wAddSel = el('select'), wAddChart = el('button'), wAddNote = el('p', { className: 'wnote' });
+const wAdd = el('div', { id: 'wAdd', hidden: true },
+  symbolSearch((sym) => wAddDo(sym)),
+  el('label', { className: 'wrow' }, el('span', { textContent: t('Section') }), wAddSel),
+  wAddChart, wAddNote);
+$('#sideWatch .whead').after(wAdd);
+function wAddDo(sym) {
+  const sec = wAddSel.value; store.set('addTo', sec);
+  const r = addWatch(sym, sec);
+  wAddNote.textContent = t(r === 'added' ? '{0} added to {1}' : r === 'moved' ? '{0} moved to {1}' : '{0} is already in {1}', sym.toUpperCase(), sectionLabel(sec));
+  wAddChart.textContent = '+ ' + t('Add {0} (on the chart)', state.symbol);
+  wAdd.querySelector('input').focus();
+}
+function openWatchAdd() {
+  const secs = watchSections(), def = defaultSection();
+  wAddSel.textContent = '';
+  for (const sec of ['', ...secs]) wAddSel.append(el('option', { value: sec, textContent: sectionLabel(sec), selected: sec === def }));
+  wAddSel.disabled = !secs.length;
+  wAddChart.textContent = '+ ' + t('Add {0} (on the chart)', state.symbol);
+  wAddNote.textContent = t('Tip: right-click a symbol in the list to move it to another section.');
+  wAdd.hidden = false; wAdd.querySelector('input').focus();
+}
+wAddChart.addEventListener('click', () => wAddDo(state.symbol));
+wAddSel.addEventListener('change', () => store.set('addTo', wAddSel.value));
+wAdd.addEventListener('click', (e) => e.stopPropagation());
+wAdd.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !e.defaultPrevented) wAdd.hidden = true; });
+document.addEventListener('click', () => { wAdd.hidden = true; });
+$('#addWatch').addEventListener('click', (e) => { e.stopPropagation(); if (wAdd.hidden) openWatchAdd(); else wAdd.hidden = true; });
 $('#addSec').addEventListener('click', () => { state.watch.push('#' + t('New section')); renameI = state.watch.length - 1; saveWatch(); renderWatch(); $('#wlist').scrollTop = 1e6; });
 
 // ---- import a watchlist exported as EXCHANGE:SYMBOL text and map it to this app's symbols
@@ -1536,7 +1614,7 @@ function drawIbLines() {
   const pp = state.paper.pos[state.symbol]; // the practice account's lines
   if (pp) add(pp.avg, C.cost, `${t('Paper')} · ${t('Avg cost')} · ${fmtQty(pp.qty)}`);
   for (const o of state.paper.orders) if (o.sym === state.symbol) add(o.price, o.side === 'BUY' ? C.up : C.down, `${t('Paper')} · ${t(o.side === 'BUY' ? 'Buy' : 'Sell')} ${fmtQty(o.qty)} ${t(ORDER_TYPES[o.type])}`);
-  for (const a of state.alerts) if (!a.hit && a.sym === state.symbol) add(a.price, ALERT_COLOR, '🔔 ' + t('Alert'));
+  for (const a of state.alerts) if (!a.hit && a.sym === state.symbol && kindOf(a) === 'price') add(a.price, ALERT_COLOR, '🔔 ' + t('Alert'));
 }
 for (const b of $('#sideTabs').children) {
   b.addEventListener('click', () => {
@@ -1627,10 +1705,13 @@ async function paperTick(own) { // refresh prices, then fill limit and stop orde
   if (paperBusy) return; paperBusy = true;
   const lead = paperLeader || own === true; // own: right after an order placed in this window
   try {
-    const P = state.paper, syms = [...new Set([...Object.keys(P.pos), ...P.orders.map((o) => o.sym), ...state.alerts.filter((a) => !a.hit).map((a) => a.sym)])].filter((s) => s !== state.symbol);
+    const P = state.paper, waiting = state.alerts.filter((a) => !a.hit);
+    const syms = [...new Set([...Object.keys(P.pos), ...P.orders.map((o) => o.sym), ...waiting.map((a) => a.sym)])]
+      .filter((s) => s !== state.symbol || waiting.some((a) => a.sym === s && DAILY_KINDS.has(kindOf(a)))); // the charted symbol's price comes from the chart
     if (syms.length) {
-      try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',')); for (const r of j.rows) if (r.last != null) paperQ.set(r.symbol, r.last); } catch { /* keep the last known prices */ }
+      try { const j = await api('/api/screen?symbols=' + syms.map(encodeURIComponent).join(',')); for (const r of j.rows) { if (r.last != null) paperQ.set(r.symbol, r.last); paperRows.set(r.symbol, r); } } catch { /* keep the last known prices */ }
     }
+    if (paperLeader) await loadLineBars(waiting);
     let changed = false;
     if (lead) for (const o of [...P.orders]) {
       const px = paperPrice(o.sym); if (px == null) continue;
@@ -1900,27 +1981,105 @@ function beep() {
   } catch { /* no sound */ }
 }
 const canNotify = () => 'Notification' in window;
-function addAlert(sym, price) { // returns an error text, or null when the alert was added
-  const px = paperPrice(sym);
-  if (!(price > 0)) return t('Enter the alert price.');
-  if (px == null) return t('No price for {0} yet.', sym);
-  if (price === px) return t('The price is already there.');
+// Kinds of alert (a.kind; older alerts have none and are 'price'). Each fires once, when its value reaches its level:
+//   price: the price reaches a.price               line: the price crosses a line drawn on the chart (a.lt, a.a, a.b, a.tf)
+//   pct:   today's change reaches a.value (%)      rsi:  the daily RSI(14) reaches a.value
+//   ma:    the price crosses its a.period-day average
+// a.op is 'above' (fires when the value rises to the level) or 'below'.
+const kindOf = (a) => a.kind || 'price';
+const DAILY_KINDS = new Set(['pct', 'rsi', 'ma']); // need the day's figures from /api/screen
+const LINE_ALERT_TYPES = new Set(['trend', 'ray', 'extline', 'arrow', 'hline', 'hray']);
+const paperRows = new Map(), lineBars = new Map(); // latest daily figures per symbol; bars for line alerts not on the chart
+const quoteRow = (sym) => paperRows.get(sym) || watchData.get(sym) || null;
+function logicalIn(d, t) { // like timeToLogical, for any list of bars
+  const n = d.length, step = n > 1 ? (d[n - 1].time - d[Math.max(0, n - 21)].time) / Math.min(20, n - 1) : 86400;
+  if (t <= d[0].time) return (t - d[0].time) / step;
+  if (t >= d[n - 1].time) return n - 1 + (t - d[n - 1].time) / step;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (d[m].time <= t) lo = m; else hi = m; }
+  return lo + (t - d[lo].time) / (d[hi].time - d[lo].time);
+}
+// Where a drawn line is at the latest bar, measured in bars of the timeframe it was drawn on (as the chart shows it),
+// and extended to the right.
+function lineLevel(a) {
+  if (a.lt === 'hline' || a.lt === 'hray') return a.a.price;
+  const d = a.sym === state.symbol && a.tf === state.tf && state.raw.length ? state.raw : lineBars.get(a.sym + '|' + a.tf);
+  if (!d || d.length < 2) return null;
+  const la = logicalIn(d, a.a.time), lb = logicalIn(d, a.b.time);
+  if (Math.abs(lb - la) < 1e-9) return null;
+  return a.a.price + (a.b.price - a.a.price) * (d.length - 1 - la) / (lb - la);
+}
+async function loadLineBars(waiting) {
+  const need = new Set();
+  for (const a of waiting) if (kindOf(a) === 'line' && a.lt !== 'hline' && a.lt !== 'hray' && TF[a.tf] && !(a.sym === state.symbol && a.tf === state.tf)) need.add(a.sym + '|' + a.tf);
+  for (const key of need) {
+    const [sym, tf] = key.split('|'), [interval, range] = TF[tf];
+    try { const j = await api(`/api/candles?symbol=${encodeURIComponent(sym)}&interval=${interval}&range=${range}${state.ext ? '&ext=1' : ''}`); if (j.bars.length) lineBars.set(key, j.bars); } catch { /* try again next time */ }
+  }
+}
+function alertState(a) { // now = the watched value, level = where the alert fires, px = the price
+  const k = kindOf(a), px = paperPrice(a.sym), row = quoteRow(a.sym);
+  if (k === 'price') return { now: px, level: a.price, px };
+  if (k === 'line') return { now: px, level: lineLevel(a), px };
+  if (!row) return { now: null, level: null, px };
+  if (k === 'pct') return { now: row.chg, level: a.value, px };
+  if (k === 'rsi') return { now: row.rsi, level: a.value, px };
+  return { now: px ?? row.last, level: row['sma' + a.period], px: px ?? row.last }; // ma
+}
+const reached = (a, s) => s.now != null && s.level != null && (a.op === 'above' ? s.now >= s.level : s.now <= s.level);
+// spec: { kind, price } | { kind: 'pct' | 'rsi', op, value } | { kind: 'ma', period } | { kind: 'line', line: a drawing }.
+// Returns an error text, or null when the alert was added.
+async function addAlert(sym, spec) {
   if (state.alerts.filter((a) => !a.hit).length >= 100) return t('Too many alerts.');
-  state.alerts.push({ id: Date.now(), sym, op: price > px ? 'above' : 'below', price, time: nowSec(), hit: 0, hitPrice: 0 });
+  const k = spec.kind || 'price', a = { id: Date.now(), sym, kind: k, time: nowSec(), hit: 0, hitPrice: 0 };
+  if (k === 'price') { if (!(spec.price > 0)) return t('Enter the alert price.'); a.price = spec.price; }
+  else if (k === 'pct') { if (!(spec.value > 0 && spec.value <= 1000)) return t('Enter a percentage above zero.'); a.op = spec.op; a.value = spec.op === 'above' ? spec.value : -spec.value; }
+  else if (k === 'rsi') { if (!(spec.value > 0 && spec.value < 100)) return t('Enter an RSI level between 0 and 100.'); a.op = spec.op; a.value = spec.value; }
+  else if (k === 'ma') a.period = spec.period === 200 ? 200 : 50;
+  else if (k === 'line') {
+    if (state.type === 'renko') return t('Line alerts are not available on the Renko chart.');
+    const d = spec.line; a.lt = d.type; a.tf = state.tf; a.a = { time: d.a.time, price: d.a.price }; a.b = { time: d.b.time, price: d.b.price };
+  }
+  if (DAILY_KINDS.has(k) && !quoteRow(sym)) {
+    try { const j = await api('/api/screen?symbols=' + encodeURIComponent(sym)); for (const r of j.rows) paperRows.set(r.symbol, r); } catch { /* reported below */ }
+  }
+  const s = alertState(a);
+  if (s.px == null) return t('No price for {0} yet.', sym);
+  if (s.now == null || s.level == null) return t('Not enough data for this alert on {0}.', sym);
+  if (!a.op) { if (s.now === s.level) return t('The price is already there.'); a.op = s.level > s.now ? 'above' : 'below'; }
+  else if (reached(a, s)) return t('That is already the case now.');
+  state.alerts.push(a);
   saveAlerts(); drawIbLines(); renderAlerts();
   if (canNotify() && Notification.permission === 'default') { try { Notification.requestPermission().then(renderAlerts, () => {}); } catch { /* older browsers */ } }
   return null;
+}
+// [what it waits for, its level] for the lists; level = the level now (waiting) or when it fired
+function alertLabel(a, level) {
+  const up = a.op === 'above', k = kindOf(a), p = (v) => (v == null ? '–' : fmtLast(v));
+  if (k === 'line') return [t(up ? '▲ crosses above the line' : '▼ crosses below the line'), p(level)];
+  if (k === 'pct') return [t(up ? '▲ up today by' : '▼ down today by'), Math.abs(a.value).toFixed(2) + '%'];
+  if (k === 'rsi') return [t(up ? 'RSI rises above' : 'RSI falls below'), String(a.value)];
+  if (k === 'ma') return [t(up ? '▲ crosses above the {0}-day average' : '▼ crosses below the {0}-day average', a.period), p(level)];
+  return [t(up ? '▲ rises to' : '▼ falls to'), p(a.price)];
+}
+function alertMessage(a, s) {
+  const up = a.op === 'above', k = kindOf(a);
+  if (k === 'line') return t(up ? '{0} crossed above the line at {1}' : '{0} crossed below the line at {1}', a.sym, fmtLast(s.level));
+  if (k === 'pct') return t(up ? '{0} is up {1} today' : '{0} is down {1} today', a.sym, Math.abs(s.now).toFixed(2) + '%');
+  if (k === 'rsi') return t(up ? '{0}: RSI rose to {1}' : '{0}: RSI fell to {1}', a.sym, s.now.toFixed(1));
+  if (k === 'ma') return t(up ? '{0} crossed above its {1}-day average ({2})' : '{0} crossed below its {1}-day average ({2})', a.sym, a.period, fmtLast(s.level));
+  return t(up ? '{0} rose to {1} (alert at {2})' : '{0} fell to {1} (alert at {2})', a.sym, fmtLast(s.px), fmtLast(a.price));
 }
 function checkAlerts() {
   let changed = false;
   for (const a of state.alerts) {
     if (a.hit) continue;
-    const px = paperPrice(a.sym); if (px == null) continue;
-    if (a.op === 'above' ? px < a.price : px > a.price) continue;
-    a.hit = nowSec(); a.hitPrice = px; changed = true;
-    const body = t(a.op === 'above' ? '{0} rose to {1} (alert at {2})' : '{0} fell to {1} (alert at {2})', a.sym, fmtLast(px), fmtLast(a.price));
-    toast(t('Price alert'), body, () => setSymbol(a.sym, true)); beep();
-    try { if (canNotify() && Notification.permission === 'granted') new Notification('InvestorView – ' + t('Price alert'), { body, icon: 'icon.png' }); } catch { /* the in-app message is enough */ }
+    const s = alertState(a);
+    if (!reached(a, s)) continue;
+    a.hit = nowSec(); a.hitPrice = s.px ?? 0; a.hitValue = s.now; a.hitLevel = s.level; changed = true;
+    const title = kindOf(a) === 'price' ? t('Price alert') : t('Alert'), body = alertMessage(a, s);
+    toast(title, body, () => setSymbol(a.sym, true)); beep();
+    try { if (canNotify() && Notification.permission === 'granted') new Notification('InvestorView – ' + title, { body, icon: 'icon.png' }); } catch { /* the in-app message is enough */ }
   }
   if (!changed) return;
   const done = state.alerts.filter((a) => a.hit);
@@ -1930,21 +2089,37 @@ function checkAlerts() {
 let alertUI = null, alertNote = '';
 function buildAlerts() {
   const box = $('#sideAlerts');
-  const ui = { sym: el('b'), last: el('span'), price: el('input', { type: 'number', min: '0', step: 'any', placeholder: t('Alert price') }), add: el('button', { className: 'primary', textContent: t('Add alert') }),
+  const ui = { sym: el('b'), last: el('span'), type: el('select'), price: el('input', { type: 'number', min: '0', step: 'any', placeholder: t('Alert price') }), add: el('button', { className: 'primary', textContent: t('Add alert') }),
     note: el('p', { className: 'pnote' }), perm: el('button', { textContent: t('Turn on notifications'), title: t('Also show a Windows notification when an alert triggers') }),
     wait: el('div'), done: el('div'), clear: el('button', { className: 'mini', textContent: t('Clear') }) };
-  const go = () => { const err = addAlert(state.symbol, +ui.price.value); alertNote = err || ''; if (!err) ui.price.value = ''; renderAlerts(); };
+  // [value, label, input placeholder (none = no input), default value]
+  const TYPES = [['price', 'Price reaches', 'Alert price'], ['pctUp', 'Up today by (%)', '%', '3'], ['pctDown', 'Down today by (%)', '%', '3'],
+    ['rsiAbove', 'RSI (14, daily) rises above', 'RSI', '70'], ['rsiBelow', 'RSI (14, daily) falls below', 'RSI', '30'],
+    ['ma50', 'Price crosses the 50-day average'], ['ma200', 'Price crosses the 200-day average']];
+  for (const [v, label] of TYPES) ui.type.append(el('option', { value: v, textContent: t(label) }));
+  ui.type.addEventListener('change', () => {
+    const ty = TYPES.find((x) => x[0] === ui.type.value);
+    ui.price.hidden = !ty[2]; ui.price.placeholder = ty[2] ? t(ty[2]) : ''; ui.price.value = ty[3] || ''; alertNote = ''; renderAlerts();
+  });
+  const go = async () => {
+    const v = +ui.price.value, ty = ui.type.value;
+    const spec = ty === 'price' ? { kind: 'price', price: v } : ty === 'pctUp' ? { kind: 'pct', op: 'above', value: v } : ty === 'pctDown' ? { kind: 'pct', op: 'below', value: v }
+      : ty === 'rsiAbove' ? { kind: 'rsi', op: 'above', value: v } : ty === 'rsiBelow' ? { kind: 'rsi', op: 'below', value: v } : { kind: 'ma', period: ty === 'ma200' ? 200 : 50 };
+    ui.add.disabled = true;
+    try { const err = await addAlert(state.symbol, spec); alertNote = err || ''; if (!err && ty === 'price') ui.price.value = ''; } finally { ui.add.disabled = false; }
+    renderAlerts();
+  };
   ui.add.addEventListener('click', go);
   ui.price.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
   ui.perm.addEventListener('click', () => { try { Notification.requestPermission().then(renderAlerts, () => {}); } catch { /* older browsers */ } });
   ui.clear.addEventListener('click', () => { state.alerts = state.alerts.filter((a) => !a.hit); saveAlerts(); renderAlerts(); });
   box.append(
-    el('div', { className: 'ibhead' }, el('span', { textContent: t('Price alerts') }), el('span', { className: 'grow' }), ui.perm),
+    el('div', { className: 'ibhead' }, el('span', { textContent: t('Alerts') }), el('span', { className: 'grow' }), ui.perm),
     el('h4', { textContent: t('New alert') }),
     el('div', { className: 'ticket' }, symbolSearch((sym) => { alertNote = ''; setSymbol(sym, true); renderAlerts(); }),
-      el('div', { className: 'trow head' }, ui.sym, ui.last), el('div', { className: 'trow' }, ui.price, ui.add), ui.note),
+      el('div', { className: 'trow head' }, ui.sym, ui.last), el('div', { className: 'trow' }, ui.type), el('div', { className: 'trow' }, ui.price, ui.add), ui.note),
     el('h4', { textContent: t('Waiting') }), ui.wait, el('h4', {}, t('Triggered'), ui.clear), ui.done,
-    el('p', { className: 'pfoot', textContent: t('Alerts are checked about every 20 seconds, and only while this app is open. When one triggers you get a message here, a sound and, if turned on, a Windows notification. You can also right-click the chart to add an alert at that price.') }));
+    el('p', { className: 'pfoot', textContent: t('Alerts are checked about every 20 seconds, and only while this app is open. When one triggers you get a message here, a sound and, if turned on, a Windows notification. Right-click the chart to add an alert at that price, or right-click a trend line or horizontal line you drew to be alerted when the price crosses it. Change % and RSI use daily figures.') }));
   return ui;
 }
 function renderAlerts() {
@@ -1958,20 +2133,23 @@ function renderAlerts() {
   ui.wait.textContent = '';
   if (!wait.length) ui.wait.append(el('p', { textContent: t('No alerts waiting.') }));
   for (const a of wait) {
-    const last = paperPrice(a.sym), away = last == null ? null : (a.price / last - 1) * 100;
+    const s = alertState(a), k = kindOf(a), [what, level] = alertLabel(a, s.level);
+    const hint = k === 'pct' ? (s.now == null ? '' : t('now {0}', fmtPct(s.now))) : k === 'rsi' ? (s.now == null ? '' : t('now {0}', s.now.toFixed(1)))
+      : s.px == null || s.level == null ? '' : t('{0} away', fmtPct((s.level / s.px - 1) * 100));
     const r = el('div', { className: 'ibrow link' + (a.sym === state.symbol ? ' on' : '') },
-      el('div', {}, el('b', { textContent: a.sym }), el('small', { textContent: t(a.op === 'above' ? '▲ rises to' : '▼ falls to') })),
-      el('div', { className: 'r' }, el('span', { textContent: fmtLast(a.price) }), drop(a), el('small', { textContent: away == null ? '' : t('{0} away', fmtPct(away)) })));
+      el('div', {}, el('b', { textContent: a.sym }), el('small', { textContent: what })),
+      el('div', { className: 'r' }, el('span', { textContent: level }), drop(a), el('small', { textContent: hint })));
     r.addEventListener('click', () => setSymbol(a.sym, true));
     ui.wait.append(r);
   }
   ui.done.textContent = ''; ui.clear.hidden = !done.length;
   if (!done.length) ui.done.append(el('p', { textContent: t('Nothing triggered yet.') }));
   for (const a of done) {
-    const when = new Date(a.hit * 1000);
+    const when = new Date(a.hit * 1000), k = kindOf(a), [what, level] = alertLabel(a, a.hitLevel);
+    const at = k === 'pct' && a.hitValue != null ? fmtPct(a.hitValue) : k === 'rsi' && a.hitValue != null ? a.hitValue.toFixed(1) : fmtLast(a.hitPrice);
     const r = el('div', { className: 'ibrow link' },
       el('div', {}, el('b', { textContent: a.sym }), el('small', { textContent: `${when.toLocaleDateString()} ${when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` })),
-      el('div', { className: 'r' }, el('span', { className: a.op === 'above' ? 'up' : 'down', textContent: (a.op === 'above' ? '▲ ' : '▼ ') + fmtLast(a.price) }), drop(a), el('small', { textContent: t('at {0}', fmtLast(a.hitPrice)) })));
+      el('div', { className: 'r' }, el('span', { className: a.op === 'above' ? 'up' : 'down', title: what, textContent: (k === 'price' ? (a.op === 'above' ? '▲ ' : '▼ ') : what.replace(/^[▲▼] /, '') + ' ') + level }), drop(a), el('small', { textContent: t('at {0}', at) })));
     r.addEventListener('click', () => setSymbol(a.sym, true));
     ui.done.append(r);
   }
@@ -1983,11 +2161,21 @@ if (!EMBED) stage.addEventListener('contextmenu', (e) => {
   const price = S.main.coordinateToPrice(e.clientY - chartEl.getBoundingClientRect().top);
   if (!(price > 0)) return;
   e.preventDefault();
-  const p = +price.toFixed(precision());
+  const p = +price.toFixed(precision()), sym = state.symbol;
   const li = el('li', { textContent: '🔔 ' + t('Add alert at {0}', fmtP(p)) });
-  li.addEventListener('click', () => { const err = addAlert(state.symbol, p); toast(t('Price alert'), err || t('Alert added: {0} at {1}', state.symbol, fmtP(p))); });
+  li.addEventListener('click', async () => { const err = await addAlert(sym, { kind: 'price', price: p }); toast(t('Price alert'), err || t('Alert added: {0} at {1}', sym, fmtP(p))); });
   ctxMenu.textContent = ''; ctxMenu.append(li);
-  ctxMenu.style.left = Math.min(e.clientX, innerWidth - 220) + 'px'; ctxMenu.style.top = Math.min(e.clientY, innerHeight - 50) + 'px'; ctxMenu.hidden = false;
+  // a trend line or horizontal line under the pointer: alert when the price crosses it
+  const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  const line = [...list()].reverse().find((d) => LINE_ALERT_TYPES.has(d.type) && hitsDrawing(d, x, y));
+  if (line) {
+    const ll = el('li', { textContent: '🔔 ' + t('Alert when the price crosses this line') });
+    ll.addEventListener('click', async () => { const err = await addAlert(sym, { kind: 'line', line }); toast(t('Alert'), err || t('Alert added: {0} crosses the line', sym)); });
+    ctxMenu.prepend(ll);
+  }
+  ctxMenu.hidden = false;
+  const m = ctxMenu.getBoundingClientRect();
+  ctxMenu.style.left = Math.max(4, Math.min(e.clientX, innerWidth - m.width - 8)) + 'px'; ctxMenu.style.top = Math.max(4, Math.min(e.clientY, innerHeight - m.height - 8)) + 'px';
 });
 document.addEventListener('click', () => { ctxMenu.hidden = true; });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') ctxMenu.hidden = true; });

@@ -124,7 +124,7 @@ main { min-height: 0; }
 #wlist li:hover .rm { visibility: visible; }
 #wlist .rm:hover { color: var(--down); }
 
-#wlist li.sec { grid-template-columns: 1fr 18px 18px; gap: 4px; padding: 5px 4px 5px 10px; background: var(--bg); color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
+#wlist li.sec { grid-template-columns: 1fr 18px 18px 18px; gap: 4px; padding: 5px 4px 5px 10px; background: var(--bg); color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
 #wlist li.sec:hover { color: var(--text); }
 #wlist li.sec input { grid-column: 1 / -1; width: 100%; padding: 2px 6px; }
 #wlist li.dropB { box-shadow: inset 0 2px var(--accent); }
@@ -279,6 +279,18 @@ html.embed .seg button { padding: 5px 6px; }
 #ctx { position: fixed; z-index: 100; margin: 0; padding: 4px; list-style: none; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
 #ctx li { padding: 6px 12px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
 #ctx li:hover { background: var(--hover); }
+#ctx li.head { cursor: default; color: var(--muted); font-size: 11px; padding: 4px 12px; }
+#ctx li.head:hover { background: none; }
+#ctx li.danger:hover { color: var(--down); }
+/* watchlist: the "+ Add" box, the section "+" button, and the highlight on a symbol just added or moved */
+#wAdd { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--panel2); }
+#wAdd .wrow { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+#wAdd .wrow select { flex: 1; min-width: 0; }
+#wAdd > button { align-self: flex-start; font-size: 12px; padding: 3px 8px; }
+#wAdd .wnote { margin: 0; font-size: 11px; color: var(--muted); }
+#wlist .rm.add:hover { color: var(--accent); }
+@keyframes wflash { from { background: rgba(76,141,255,.35); } to { background: transparent; } }
+#wlist li.flash { animation: wflash 1.6s ease-out; }
 #toasts { position: fixed; right: 16px; bottom: 16px; z-index: 200; display: flex; flex-direction: column; gap: 8px; max-width: 340px; }
 .toast { background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); cursor: pointer; }
 .toast b { display: block; margin-bottom: 2px; }
