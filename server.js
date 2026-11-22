@@ -436,6 +436,10 @@ function cleanState(s) {
         const o = { type: d.type, a: { time: d.a.time, price: d.a.price }, b: { time: d.b.time, price: d.b.price } };
         if (isPoint(d.c)) o.c = { time: d.c.time, price: d.c.price }; // third point: channels, pitchforks, triangles, positions
         if (typeof d.text === 'string' && d.text) o.text = d.text.slice(0, 200);
+        // style picked in the app (2.4): colour, line width, line pattern
+        if (typeof d.color === 'string' && /^#[0-9a-f]{6}$/i.test(d.color)) o.color = d.color;
+        if (isNum(d.w) && d.w >= 1 && d.w <= 4) o.w = d.w;
+        if (d.dash === 'dash' || d.dash === 'dot') o.dash = d.dash;
         return o;
       });
     if (ok.length) drawings[sym] = ok;
@@ -526,9 +530,13 @@ const WORKING = /^(submitted|presubmitted|pendingsubmit|pendingcancel)$/i;
 function ibkrSnapshot(wantAccount) {
   return cached('ibkr|' + wantAccount, 5000, async () => {
     if (!IB_LOCAL) return { state: 'off' };
-    let accts;
-    try { accts = await ib('GET', '/portfolio/accounts'); } catch { return { state: 'unreachable' }; }
-    const list = Array.isArray(accts.json) ? accts.json.filter((a) => a && (a.accountId || a.id)) : [];
+    const accounts = async () => { const r = await ib('GET', '/portfolio/accounts'); return Array.isArray(r.json) ? r.json.filter((a) => a && (a.accountId || a.id)) : []; };
+    let list;
+    try {
+      list = await accounts();
+      // While the gateway refreshes its session it can briefly answer with no accounts: wake it and ask once more.
+      if (!list.length) { await ib('POST', '/tickle').catch(() => {}); list = await accounts(); }
+    } catch { return { state: 'unreachable' }; }
     if (!list.length) return { state: 'login' };
     const acct = list.find((a) => (a.accountId || a.id) === wantAccount) || list[0];
     const id = String(acct.accountId || acct.id);
@@ -583,7 +591,7 @@ function ibkrSnapshot(wantAccount) {
 // ---- MCP server (run with --mcp) --------------------------------------------
 // Speaks the Model Context Protocol over stdin/stdout so an AI app can read market
 // data, run screens and read the saved watchlist and drawings. Read-only.
-const VERSION = '2.3.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
+const VERSION = '2.4.0'; // keep in step with package.json; shown in the app, the console and the MCP handshake
 const TF = { '1m': ['1m', '5d'], '5m': ['5m', '1mo'], '15m': ['15m', '1mo'], '1h': ['60m', '6mo'], '1D': ['1d', '5y'], '1W': ['1wk', '10y'], '1M': ['1mo', 'max'] };
 const UNIVERSES = {
   us_large_caps: 'AAPL MSFT NVDA GOOGL AMZN META TSLA AVGO BRK-B LLY JPM V UNH XOM MA COST HD PG JNJ WMT NFLX ABBV BAC CRM ORCL KO CVX MRK AMD PEP ADBE TMO LIN CSCO ACN MCD ABT WFC IBM GE QCOM DIS INTC CAT VZ TXN PFE UBER BA',
