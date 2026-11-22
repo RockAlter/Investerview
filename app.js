@@ -895,9 +895,70 @@ for (const grp of TOOL_GROUPS) {
 toolsEl.append(fly);
 document.addEventListener('click', () => { fly.hidden = true; });
 toolsEl.append(el('hr'));
+// Drawing helpers, each a switch that is remembered: magnet (points snap to the nearest open / high / low / close),
+// keep drawing (the tool stays on after each drawing), lock (drawings cannot be selected, moved or deleted), hide.
+let magnetOn = !!store.get('magnet', false), stayOn = !!store.get('drawStay', false), lockDraw = !!store.get('drawLock', false), hideDraw = !!store.get('drawHide', false);
+const TOGGLES = [
+  ['magnet', 'Magnet: snap points to the open, high, low or close of the nearest bar', '<path d="M5 3v7a5 5 0 0010 0V3h-3.2v7a1.8 1.8 0 01-3.6 0V3z"/><path d="M5 6h3.2M11.8 6H15"/>', () => magnetOn, (v) => { magnetOn = v; store.set('magnet', v); }],
+  ['drawStay', 'Keep drawing: the tool stays on after each drawing (Esc to stop)', '<path d="M3 17l1.2-4.2L12 5l3 3-7.8 7.8z"/><path d="M14 14h4M16 12v4"/>', () => stayOn, (v) => { stayOn = v; store.set('drawStay', v); }],
+  ['drawLock', 'Lock drawings: they cannot be selected, moved or deleted', '<rect x="5" y="9" width="10" height="8" rx="1.5"/><path d="M7 9V6.5a3 3 0 016 0V9"/>', () => lockDraw, (v) => { lockDraw = v; store.set('drawLock', v); if (v) selected = null; }],
+  ['drawHide', 'Hide all drawings', '<path d="M2 10s3-5.5 8-5.5S18 10 18 10s-3 5.5-8 5.5S2 10 2 10z"/><circle cx="10" cy="10" r="2.4"/><path d="M3 17L17 3"/>', () => hideDraw, (v) => { hideDraw = v; store.set('drawHide', v); if (v) selected = null; }],
+];
+const toggleBtns = {};
+for (const [id, title, icon, get, set] of TOGGLES) {
+  const b = el('button', { className: 'tg' + (get() ? ' on' : ''), title: t(title), innerHTML: svg(icon) });
+  b.addEventListener('click', (e) => { e.stopPropagation(); set(!get()); b.classList.toggle('on', get()); });
+  toggleBtns[id] = b; toolsEl.append(b);
+}
 const delBtn = el('button', { title: t('Delete selected drawing, or all drawings on this symbol if none is selected (Del)'), innerHTML: svg('<path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/>') });
 delBtn.addEventListener('click', () => removeDrawings());
 toolsEl.append(delBtn);
+// Style of a drawing (d.color, d.w = line width, d.dash): a bar on the chart while a drawing is selected.
+// New drawings take the style picked last.
+const DRAW_COLORS = ['#4c8dff', '#f0524f', '#2fbf71', '#f5a524', '#a78bfa', '#22c1c3', '#e5e7eb', '#1f2937'];
+const DASHES = { solid: [], dash: [7, 4], dot: [2, 3] };
+let drawStyle = store.get('drawStyle', {});
+const dstyle = el('div', { id: 'dstyle', hidden: true });
+const styleBtn = (title, inner, apply, isOn) => {
+  const b = el('button', { title: t(title), innerHTML: inner });
+  b.addEventListener('pointerdown', (e) => e.stopPropagation());
+  b.addEventListener('click', (e) => {
+    e.stopPropagation(); if (!selected) return;
+    apply(selected); drawStyle = { color: selected.color, w: selected.w, dash: selected.dash }; store.set('drawStyle', drawStyle);
+    saveDrawings(); styleSel = null;
+  });
+  b.isOn = isOn; return b;
+};
+for (const c of DRAW_COLORS) dstyle.append(styleBtn('Colour', `<i style="background:${c}"></i>`, (d) => { d.color = c; }, (d) => (d.color || DRAW_COLORS[0]) === c));
+dstyle.append(el('span', { className: 'sep' }));
+for (const w of [1, 2, 3, 4]) dstyle.append(styleBtn('Line width', `<b style="height:${w}px"></b>`, (d) => { d.w = w; }, (d) => (d.w || 1) === w));
+dstyle.append(el('span', { className: 'sep' }));
+for (const [k, label] of [['solid', 'Solid line'], ['dash', 'Dashed line'], ['dot', 'Dotted line']]) {
+  dstyle.append(styleBtn(label, `<svg viewBox="0 0 20 20"><path d="M2 10h16" stroke-dasharray="${DASHES[k].join(' ')}"/></svg>`, (d) => { d.dash = k; }, (d) => (d.dash || 'solid') === k));
+}
+dstyle.append(el('span', { className: 'sep' }));
+const dstyleDel = el('button', { title: t('Delete'), innerHTML: svg('<path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/>') });
+dstyleDel.addEventListener('pointerdown', (e) => e.stopPropagation());
+dstyleDel.addEventListener('click', (e) => { e.stopPropagation(); removeDrawings(); });
+dstyle.append(dstyleDel);
+stage.append(dstyle);
+let styleSel = null; // the drawing the bar last showed
+function syncStyleBar() {
+  const show = !!selected && state.tool === 'cursor' && !lockDraw && !hideDraw;
+  if (dstyle.hidden === show) dstyle.hidden = !show;
+  if (!show || styleSel === selected) return;
+  styleSel = selected;
+  for (const b of dstyle.children) if (b.isOn) b.classList.toggle('on', b.isOn(selected));
+}
+// Magnet: the price of the nearest open / high / low / close of the bar under the pointer, if it is within 40 px
+function snap(p, g) {
+  if (!magnetOn || !p || !state.data.length) return p;
+  const i = Math.max(0, Math.min(state.data.length - 1, Math.round(timeToLogical(p.time)))), bar = state.data[i];
+  const y = S.main.priceToCoordinate(p.price); if (y == null) return p;
+  let best = null, dist = 40;
+  for (const v of [bar.open, bar.high, bar.low, bar.close]) { const vy = S.main.priceToCoordinate(v); if (vy != null && Math.abs(vy - y) < dist) { dist = Math.abs(vy - y); best = v; } }
+  return best == null ? p : { time: bar.time, price: best };
+}
 // version of the running app, always visible at the bottom of the toolbar; links to that version's GitHub release
 const RELEASES = 'https://github.com/RockAlter/Investerview/releases';
 const verEl = el('a', { id: 'ver', href: RELEASES, target: '_blank', rel: 'noopener' }); toolsEl.append(verEl);
@@ -936,6 +997,7 @@ if (WEB) { // no local server: hide what needs one, and say so
 
 function setTool(id) {
   state.tool = id; draft = null; placed = 0;
+  if (id !== 'cursor' && hideDraw) { hideDraw = false; store.set('drawHide', false); toggleBtns.drawHide.classList.remove('on'); } // drawing again shows the drawings
   for (const b of toolsEl.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === id);
   cv.classList.toggle('active', id !== 'cursor');
   const h = $('#hint'); h.hidden = id === 'cursor'; h.textContent = HINTS[id] ? t(HINTS[id]) : '';
@@ -960,6 +1022,7 @@ window.addEventListener('storage', (e) => {
   else if (e.key === 'cd.indicators') { state.indicators = store.get('indicators', state.indicators); if (chart && state.data.length) buildChart(true); }
 });
 function removeDrawings() {
+  if (lockDraw) { toast(t('Drawings are locked'), t('Unlock them with the lock button in the left toolbar.')); return; }
   if (selected) { state.drawings[state.symbol] = list().filter((d) => d !== selected); selected = null; }
   else if (list().length && confirm(t('Remove all {0} drawings on {1}?', list().length, state.symbol))) state.drawings[state.symbol] = [];
   saveDrawings();
@@ -998,9 +1061,9 @@ function fromXY(x, y, g) {
   const price = S.main.coordinateToPrice(y);
   return price == null ? null : { time: logicalToTime(Math.round((x - g.x0) / g.sp)), price };
 }
-function evPoint(e) {
+function evPoint(e) { // the chart point under the pointer, pulled onto a bar's open / high / low / close by the magnet
   const r = cv.getBoundingClientRect(), g = geom();
-  return g ? fromXY(e.clientX - r.left, e.clientY - r.top, g) : null;
+  return g ? snap(fromXY(e.clientX - r.left, e.clientY - r.top, g), g) : null;
 }
 
 const KEYS = ['a', 'b', 'c'];
@@ -1010,6 +1073,7 @@ cv.addEventListener('pointerdown', (e) => {
   const n = NPTS[state.tool] || 2;
   if (!draft) {
     draft = { type: state.tool, a: p, b: p }; placed = 0;
+    for (const k of ['color', 'w', 'dash']) if (drawStyle[k] != null) draft[k] = drawStyle[k]; // the style picked last
     if (n === 3) draft.c = p;
     if (state.tool === 'text') {
       const text = (prompt(t('Text to show on the chart')) || '').trim().slice(0, 200);
@@ -1030,9 +1094,10 @@ cv.addEventListener('pointerup', (e) => {
   if (draft && downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6) finish(); // drag to draw
   downAt = null;
 });
+let finishedAt = 0;
 function finish() {
-  list().push(draft); selected = draft; draft = null; downAt = null; placed = 0;
-  saveDrawings(); setTool('cursor');
+  list().push(draft); selected = stayOn ? null : draft; draft = null; downAt = null; placed = 0; finishedAt = performance.now();
+  saveDrawings(); if (!stayOn) setTool('cursor'); // "keep drawing": the same tool is ready for the next one
 }
 
 // Each frame every drawing records the lines and boxes it painted, so a click can be matched against them.
@@ -1045,13 +1110,14 @@ function distSeg(px, py, x1, y1, x2, y2) {
 }
 const hitsDrawing = (d, x, y) => (hitMap.get(d) || []).some((s) => (s.length ? distSeg(x, y, s[0], s[1], s[2], s[3]) < 6 : x >= s.x1 - 4 && x <= s.x2 + 4 && y >= s.y1 - 4 && y <= s.y2 + 4));
 function selectAt(x, y) {
-  if (dragH || dragA) return;
+  if (dragH || dragA || performance.now() - finishedAt < 400) return; // the click that ends a drawing keeps it selected
   selected = null;
+  if (lockDraw || hideDraw) return; // locked or hidden drawings cannot be picked
   for (const d of [...list()].reverse()) if (hitsDrawing(d, x, y)) { selected = d; break; }
 }
 // drag a handle of the selected drawing to move that point
 stage.addEventListener('pointerdown', (e) => {
-  if (state.tool !== 'cursor' || !selected || e.button !== 0) return;
+  if (state.tool !== 'cursor' || !selected || e.button !== 0 || lockDraw || e.target.closest('#dstyle')) return;
   const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   const h = selHandles.find((q) => Math.hypot(q.x - x, q.y - y) < 8);
   if (h) dragH = { d: selected, k: h.k };
@@ -1065,7 +1131,7 @@ stage.addEventListener('pointerdown', (e) => {
 // drag an alert's line up or down to change its price (main chart only)
 let dragA = null;
 stage.addEventListener('pointerdown', (e) => {
-  if (EMBED || dragH || state.tool !== 'cursor' || e.button !== 0 || !S.main) return;
+  if (EMBED || dragH || state.tool !== 'cursor' || e.button !== 0 || !S.main || e.target.closest('#dstyle')) return;
   const r = cv.getBoundingClientRect(), y = e.clientY - r.top, g = geom();
   if (!g || e.clientX - r.left > g.w || y > g.h) return;
   const a = state.alerts.find((q) => { if (q.hit || q.sym !== state.symbol || kindOf(q) !== 'price') return false; const ly = S.main.priceToCoordinate(q.price); return ly != null && Math.abs(ly - y) < 5; });
@@ -1123,12 +1189,14 @@ function anchoredVwap(d, i0) { // volume-weighted average price from bar i0 on (
 }
 function drawOne(d, g, isDraft) {
   const a = toXY(d.a, g), b = toXY(d.b, g), c = d.c ? toXY(d.c, g) : null; if (!a || !b || (d.c && !c)) return;
-  const sel = d === selected, col = isDraft ? '#8fb6ff' : C.accent, soft = 'rgba(76,141,255,.12)', H = [];
-  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = sel ? 2.5 : 1.5; ctx.setLineDash([]);
+  // the drawing's own style: colour, width and line pattern (see the style bar)
+  const own = /^#[0-9a-f]{6}$/i.test(d.color || '') ? d.color : C.accent, col = isDraft ? rgba(own, 0.75) : own, soft = rgba(own, 0.12), H = [];
+  const sel = d === selected, lw = Math.min(4, Math.max(1, d.w || 1.5)), dash = DASHES[d.dash] || [];
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = sel ? lw + 1 : lw; ctx.setLineDash(dash);
   const P = (x, y) => ({ x, y });
   const yOf = (price) => S.main.priceToCoordinate(price);
   const seg = (p, q, color) => { ctx.strokeStyle = color || col; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke(); H.push([p.x, p.y, q.x, q.y]); };
-  const dashed = (p, q, color) => { ctx.setLineDash([4, 4]); seg(p, q, color); ctx.setLineDash([]); };
+  const dashed = (p, q, color) => { ctx.setLineDash([4, 4]); seg(p, q, color); ctx.setLineDash(dash); };
   const far = (p, q) => { const dx = q.x - p.x, dy = q.y - p.y, l = Math.hypot(dx, dy); return l ? P(q.x + dx / l * 1e5, q.y + dy / l * 1e5) : q; }; // p -> q, carried on past the edge
   const poly = (pts, fill) => { ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); };
   const box = (p, q, fill, stroke) => {
@@ -1258,7 +1326,7 @@ function drawOne(d, g, isDraft) {
   if (!isDraft) hitMap.set(d, H);
   if (sel) {
     selHandles = handles.map(([k, p]) => ({ k, x: p.x, y: p.y }));
-    ctx.fillStyle = C.handle; ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+    ctx.fillStyle = C.handle; ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash([]);
     for (const [, h] of handles) { ctx.beginPath(); ctx.arc(h.x, h.y, 4, 0, 7); ctx.fill(); ctx.stroke(); }
   }
 }
@@ -1277,9 +1345,10 @@ function frame() {
     if (x2 > 0 && x1 < g.w) ctx.fillRect(x1, 0, x2 - x1, g.h);
   }
   const vp = S.inds.find((it) => it.vp); if (vp) drawProfile(g, vp);
-  for (const d of items) drawOne(d, g, false);
+  if (!hideDraw) for (const d of items) drawOne(d, g, false);
   if (draft) drawOne(draft, g, true);
   ctx.restore();
+  syncStyleBar();
 }
 // Volume profile: how much volume traded at each price among the bars on screen, as bars growing from the right edge
 // (green = volume of rising bars, red = falling). Each bar's volume is spread evenly over its low-high range.
@@ -1548,14 +1617,27 @@ $('#impGo').addEventListener('click', () => {
 // ---------------------------------------------------------------- IBKR positions (read-only)
 // Data comes from the local server, which reads IBKR's Client Portal Gateway. Nothing here can trade.
 let ib = null, ibTimer = 0, ibLines = [], side = 'watch';
+let ibMisses = 0, ibWasOk = false; // failed checks in a row since the last good one; whether IBKR was connected at all
+const IB_GRACE = [5000, 10000, 15000]; // retries before a connected account is shown as disconnected
 const money = (v, ccy) => v == null ? '–' : fmtP(v, 2) + (ccy ? ' ' + ccy : '');
 const signed = (v) => v == null ? '–' : (v > 0 ? '+' : '') + fmtP(v, 2);
 async function refreshIb() {
   clearTimeout(ibTimer);
-  try { ib = await api('/api/ibkr'); } catch { ib = { state: 'unreachable' }; }
+  let r;
+  try { r = await api('/api/ibkr'); } catch { r = { state: 'unreachable' }; }
+  let delay;
+  if (r.state === 'ok') { ib = r; ibMisses = 0; ibWasOk = true; delay = 15000; } // 15 s also keeps the gateway session alive
+  else if (r.state !== 'off' && ib && ib.state === 'ok' && ibMisses < IB_GRACE.length) {
+    // One failed check is usually a hiccup (a slow answer, or the gateway refreshing its session): keep showing
+    // the last positions and try again soon, instead of reporting a disconnect straight away.
+    delay = IB_GRACE[ibMisses++];
+  } else {
+    ib = r; ibMisses = 0;
+    // Not connected: keep checking, so the app reconnects by itself once the gateway is back. Before the first
+    // connection, only while the IBKR tab is open (most people never run the gateway).
+    delay = r.state === 'off' ? 0 : ibWasOk ? 30000 : side === 'pos' ? 30000 : 0;
+  }
   renderIb(); drawIbLines();
-  // connected: poll every 15 s (this also keeps the gateway session alive). Otherwise only re-check while the tab is open.
-  const delay = ib.state === 'ok' ? 15000 : side === 'pos' ? 60000 : 0;
   if (delay) ibTimer = setTimeout(refreshIb, delay);
 }
 function renderIb() {
@@ -1580,6 +1662,7 @@ function renderIb() {
   const a = ib.account, s = ib.summary || {};
   box.append(el('div', { className: 'ibhead' }, el('span', { textContent: a.alias || a.id }),
     el('span', { className: 'badge ' + (a.paper ? 'paper' : 'live'), textContent: t(a.paper ? 'PAPER' : 'LIVE') }), el('span', { className: 'badge ro', textContent: t('Read-only') })));
+  if (ibMisses) box.append(el('p', { className: 'ibwait', textContent: t('The IBKR gateway did not answer the last check. Trying again…') }));
   const sum = el('div', { className: 'ibsum' });
   const row = (label, val, colour) => { if (val == null) return; sum.append(el('span', { textContent: t(label) }), el('span', { className: colour ? cls(val) : '', textContent: colour ? signed(val) : money(val, a.currency) })); };
   row('Net liquidation', s.netLiq); row('Day P&L', s.dayPnl, true); row('Unrealized P&L', s.unrealizedPnl, true); row('Cash', s.cash); row('Buying power', s.buyingPower);
@@ -2170,7 +2253,7 @@ if (!EMBED) stage.addEventListener('contextmenu', (e) => {
   ctxMenu.textContent = ''; ctxMenu.append(li);
   // a trend line or horizontal line under the pointer: alert when the price crosses it
   const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
-  const line = [...list()].reverse().find((d) => LINE_ALERT_TYPES.has(d.type) && hitsDrawing(d, x, y));
+  const line = hideDraw ? null : [...list()].reverse().find((d) => LINE_ALERT_TYPES.has(d.type) && hitsDrawing(d, x, y));
   if (line) {
     const ll = el('li', { textContent: '🔔 ' + t('Alert when the price crosses this line') });
     ll.addEventListener('click', async () => { const err = await addAlert(sym, { kind: 'line', line }); toast(t('Alert'), err || t('Alert added: {0} crosses the line', sym)); });
